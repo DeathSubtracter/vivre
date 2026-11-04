@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Vivre</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Source+Serif+4:ital@0;1&display=swap" rel="stylesheet">
+<link href="style.css" rel="stylesheet">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Vivre</h1>
+    <p class="tag">Tell it what to look for, in a sentence, and it keeps watch over the things you care about.</p>
+  </header>
+  <div class="layout">
+    <section class="view">
+      <div class="camera">
+        <video id="cam" autoplay playsinline muted></video>
+        <div id="placeholder" class="placeholder" hidden></div>
+        <button id="camOn" class="over">Turn on camera</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <button id="stop" hidden>Stop watching</button>
+    </section>
+    <section id="setup" class="setup">
+      <label for="rules">What should it watch for? One sentence per line, up to 3.</label>
+      <textarea id="rules" rows="3" maxlength="620" placeholder="Tell me if nobody is at the desk for 10 seconds"></textarea>
+      <div class="chips" aria-label="Example rules">
+        <button type="button" class="chip">Tell me if nobody is at the desk for 10 seconds</button>
+        <button type="button" class="chip">Tell me when someone waves</button>
+        <button type="button" class="chip">Tell me if a cup is left on the table for 10 seconds</button>
+      </div>
+      <label class="consent"><input id="consent" type="checkbox"> I'm only filming people who agreed.</label>
+      <button id="go">Start watching</button>
+      <button id="sample" class="quiet">See the sample kitchen</button>
+      <p class="fine"><strong>A prototype, not a safety device.</strong> It complements smoke alarms and medical-alert gear. It checks every few seconds and can miss things.</p>
+      <p class="fine">Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never saves them.</p>
+      <details class="more">
+        <summary>Camera and video options</summary>
+        <label for="dev">Camera</label>
+        <select id="dev"><option>Turn on the camera to list cameras</option></select>
+        <button id="flip" type="button" class="quiet">Switch front or rear camera</button>
+        <label for="file">Or replay a video file</label>
+        <input id="file" type="file" accept="video/*">
+      </details>
+      <div id="rev" hidden>
+        <label for="rs">Review the session</label>
+        <input id="rs" type="range" min="0" value="0">
+        <img id="ri" alt="Frame from the session">
+      </div>
+    </section>
+    <section class="tray">
+      <div id="cards" class="cards"></div>
+      <div id="ledger"></div>
+    </section>
+  </div>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

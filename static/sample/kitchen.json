@@ -1,0 +1,15 @@
+{
+  "placeholder": true,
+  "label": "Sample kitchen placeholder. The kitchen clip isn't recorded yet, so this run is hand-written, not real model output.",
+  "clip": null,
+  "rules": [
+    {"title": "Stove on, nobody there", "sentence": "Tell me if the stove is on with a pot and nobody has been in the kitchen for 10 seconds", "need": 10}
+  ],
+  "events": [
+    {"t": 0, "cards": [{"status": "ok", "held": 0, "need": 10, "note": "Placeholder: someone is at the stove."}]},
+    {"t": 4, "cards": [{"status": "watch", "held": 0, "need": 10, "note": "Placeholder: pot on a lit burner, nobody in view."}]},
+    {"t": 8, "cards": [{"status": "watch", "held": 4, "need": 10, "note": "Placeholder: pot on a lit burner, nobody in view."}]},
+    {"t": 11, "cards": [{"status": "watch", "held": 7, "need": 10, "note": "Placeholder: pot on a lit burner, nobody in view."}]},
+    {"t": 14, "cards": [{"status": "alert", "held": 10, "need": 10, "note": "Placeholder: this is where Wonder's real explanation will appear."}], "speak": "This is a placeholder sample. The real alert will speak here."}
+  ]
+}

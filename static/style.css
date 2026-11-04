@@ -1,0 +1,57 @@
+:root{--fog:#e8edf0;--stock:#fbfcfc;--ink:#14232e;--mute:#5b6b76;--ok:#2f7d5b;--warn:#b86e00;--alert:#b3261e;--line:#c9d3d9}
+@media (prefers-color-scheme:dark){:root{--fog:#121b22;--stock:#1b2630;--ink:#e6edf1;--mute:#93a3ae;--ok:#58b890;--warn:#e0a040;--alert:#ff7a70;--line:#2c3a45}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--fog);color:var(--ink);font:17px/1.55 "Source Serif 4",Georgia,serif}
+main{max-width:1040px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 16px 64px}
+h1{font:700 clamp(44px,9vw,84px)/1 "Bricolage Grotesque",system-ui,sans-serif;letter-spacing:-.035em;margin:0}
+h2,h3,button,.status,select,summary{font-family:"Bricolage Grotesque",system-ui,sans-serif}
+.tag{color:var(--mute);font-style:italic;max-width:52ch;margin:8px 0 20px}
+
+.layout{display:grid;gap:20px}
+@media (min-width:800px){.layout{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}.view{grid-column:1}.setup{grid-column:2;grid-row:1 / span 2}.tray{grid-column:1}}
+
+.camera{position:relative;background:#000;border-radius:6px;overflow:hidden;aspect-ratio:4/3}
+video{width:100%;height:100%;object-fit:cover;display:block}
+.placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:var(--stock);color:var(--mute);font-style:italic}
+.status{min-height:1.5em;margin:10px 0 0;font-weight:500}
+.status.err{color:var(--alert)}
+
+label{display:block;font-weight:600;margin:14px 0 6px}
+textarea,select,input[type=file]{width:100%;background:var(--stock);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:10px;font:inherit}
+input[type=range]{width:100%}
+#ri{width:100%;border-radius:6px;margin-top:8px;display:block}
+button{min-height:44px;margin-top:14px;background:var(--ink);color:var(--fog);border:0;border-radius:6px;padding:10px 20px;font-size:17px;font-weight:700;cursor:pointer}
+button.quiet{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:500}
+button.over{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;background:var(--fog);color:var(--ink)}
+button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--ok);outline-offset:2px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+button.chip{margin:0;min-height:40px;padding:6px 12px;background:var(--stock);color:var(--ink);border:1px solid var(--line);font-size:14px;font-weight:500;text-align:left}
+.consent{display:flex;gap:10px;align-items:center;font-weight:500}
+.consent input{width:22px;height:22px;flex:none}
+#go{display:block;width:100%}
+#sample{display:block;width:100%;margin-top:8px}
+.more{margin-top:14px}
+.more summary{cursor:pointer;min-height:32px}
+.fine{color:var(--mute);font-size:14px;margin:12px 0 0}
+
+.cards{display:grid;gap:14px}
+.card{position:relative;background:var(--stock);border:1px solid var(--line);border-radius:4px 4px 4px 26px;padding:16px 20px;overflow:hidden;transition:transform .35s ease}
+.card::after{content:"";position:absolute;top:0;right:0;border-style:solid;border-width:0 30px 30px 0;border-color:transparent var(--ok) var(--line) transparent}
+.card.watch{border-color:var(--warn)}.card.watch::after{border-color:transparent var(--warn) var(--line) transparent}
+.card.alert{border-color:var(--alert);transform:rotate(-.5deg)}.card.alert::after{border-color:transparent var(--alert) var(--line) transparent;border-width:0 48px 48px 0}
+.card h3{margin:0;padding-right:34px;font-size:21px;line-height:1.2}
+.say{margin:2px 0 8px;color:var(--mute);font-style:italic;font-size:15px}
+.state{font:700 17px "Bricolage Grotesque",system-ui,sans-serif;color:var(--ok);margin:0}
+.watch .state{color:var(--warn)}.alert .state{color:var(--alert)}
+.note{margin:4px 0 0;font-size:15px}
+@media (prefers-reduced-motion:reduce){.card{transition:none}}
+
+#ledger h2{font-size:18px;margin:22px 0 4px}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+
+/* Monitor mode: the camera comes first, one quiet line, cards only ask for attention when they change */
+.monitor header{display:none}
+.monitor .setup{display:none}
+@media (min-width:800px){.monitor .tray{grid-column:2;grid-row:1}}
