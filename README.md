@@ -4,6 +4,8 @@
 
 Tell Vivre what to watch for in a plain sentence. It watches through your camera and microphone and alerts you when it happens.
 
+**See the demo video HERE:** https://drive.google.com/file/d/1mxDiw5nzRon1BF0P4Hc_xM5HBM5x6rz_/view?usp=sharing
+
 **Try it:** https://web-production-749fb.up.railway.app
 
 Open it in Chrome or Safari, allow the camera, then pick or type a rule. A live session runs for up to 4 minutes. If the hosted link can't reach Meta's API, try again in a few minutes or run Vivre yourself using the steps below.
