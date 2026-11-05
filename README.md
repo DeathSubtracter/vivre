@@ -42,11 +42,11 @@ flowchart LR
 - The microphone only turns on for a spoken rule or a rule about sounds. Those few seconds of sound go to Meta's API and are treated the same way as frames.
 - Each check takes a few seconds, so Vivre won't catch something that is over in a moment.
 - It has only been tried on a few simple scenes. Expect false alarms and misses. A SAM miss can also hold back a real alert, because a rule won't fire if SAM can't find what it requires.
-- Sound rules are reliable for speech, like someone calling for help. In our tests, Muse Spark and Muse Wonder often missed non-speech sounds, so rules about clapping, alarms or a crying baby won't work dependably.
+- Sound rules work best for speech, like someone calling for help, which worked through a real microphone. In our tests, Muse Spark and Muse Wonder often missed non-speech sounds, so rules about clapping, alarms or a crying baby won't work dependably.
 - Motion rules compare two frames a few seconds apart, so quick movements can be missed.
 - Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
 - Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, live watching stops and the app says why.
-- On Nov 4, calls from the hosted server to Meta's API often failed with "model not found", while the same calls from a laptop worked. The cause isn't known. Vivre retries for about a minute and then says so, so the hosted link may be unavailable at times. It runs reliably in those conditions when run locally (see below).
+- On Nov 4, calls from the hosted server to Meta's API often failed with "model not found", while the same calls from a laptop worked. The cause isn't known. Vivre retries for about a minute and then says so, so the hosted link may be unavailable at times. If that happens, run it locally (see below).
 
 ## Run it
 
