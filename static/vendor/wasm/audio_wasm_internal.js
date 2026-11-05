@@ -224,8 +224,6 @@ function updateMemoryViews() {
   Module["HEAPU32"] = HEAPU32 = new Uint32Array(b);
   Module["HEAPF32"] = HEAPF32 = new Float32Array(b);
   Module["HEAPF64"] = HEAPF64 = new Float64Array(b);
-  HEAP64 = new BigInt64Array(b);
-  HEAPU64 = new BigUint64Array(b);
 }
 
 // include: memoryprofiler.js
@@ -247,7 +245,7 @@ function initRuntime() {
   if (!Module["noFSInit"] && !FS.initialized) FS.init();
   TTY.init();
   // End ATINITS hooks
-  wasmExports["__wasm_call_ctors"]();
+  wasmExports["jb"]();
   // Begin ATPOSTCTORS hooks
   FS.ignorePermissions = false;
 }
@@ -349,14 +347,9 @@ async function instantiateAsync(binary, binaryFile, imports) {
 }
 
 function getWasmImports() {
-  // instrumenting imports is used in asyncify in two ways: to add assertions
-  // that check for proper import use, and for JSPI we use them to set up
-  // the Promise API on the import side.
-  Asyncify.instrumentWasmImports(wasmImports);
   // prepare imports
   var imports = {
-    "env": wasmImports,
-    "wasi_snapshot_preview1": wasmImports
+    "a": wasmImports
   };
   return imports;
 }
@@ -369,8 +362,6 @@ async function createWasm() {
   // performing other necessary setup
   function receiveInstance(instance) {
     wasmExports = instance.exports;
-    wasmExports = Asyncify.instrumentWasmExports(wasmExports);
-    wasmExports = applySignatureConversions(wasmExports);
     assignWasmExports(wasmExports);
     updateMemoryViews();
     return wasmExports;
@@ -401,6 +392,11 @@ async function createWasm() {
   var exports = receiveInstantiationResult(result);
   return exports;
 }
+
+// Globals used by JS i64 conversions (see makeSetValue)
+var tempDouble;
+
+var tempI64;
 
 // end include: preamble.js
 // Begin JS library code
@@ -854,10 +850,10 @@ var Browser = {
   setFullscreenCanvasSize() {
     // check if SDL is available
     if (typeof SDL != "undefined") {
-      var flags = HEAPU32[((SDL.screen) >>> 2) >>> 0];
+      var flags = HEAPU32[((SDL.screen) >> 2)];
       flags = flags | 8388608;
       // set SDL_FULLSCREEN flag
-      HEAP32[((SDL.screen) >>> 2) >>> 0] = flags;
+      HEAP32[((SDL.screen) >> 2)] = flags;
     }
     Browser.updateCanvasDimensions(Browser.getCanvas());
     Browser.updateResizeListeners();
@@ -865,10 +861,10 @@ var Browser = {
   setWindowedCanvasSize() {
     // check if SDL is available
     if (typeof SDL != "undefined") {
-      var flags = HEAPU32[((SDL.screen) >>> 2) >>> 0];
+      var flags = HEAPU32[((SDL.screen) >> 2)];
       flags = flags & ~8388608;
       // clear SDL_FULLSCREEN flag
-      HEAP32[((SDL.screen) >>> 2) >>> 0] = flags;
+      HEAP32[((SDL.screen) >> 2)] = flags;
     }
     Browser.updateCanvasDimensions(Browser.getCanvas());
     Browser.updateResizeListeners();
@@ -929,10 +925,6 @@ var noExitRuntime = true;
 var stackRestore = val => __emscripten_stack_restore(val);
 
 var stackSave = () => _emscripten_stack_get_current();
-
-var __Unwind_RaiseException = ex => {
-  abort();
-};
 
 var PATH = {
   isAbs: path => path.charAt(0) === "/",
@@ -1085,7 +1077,6 @@ var UTF8Decoder = new TextDecoder;
    * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
    * @return {string}
    */ var UTF8ArrayToString = (heapOrArray, idx = 0, maxBytesToRead, ignoreNul) => {
-  idx >>>= 0;
   var endPtr = findStringEnd(heapOrArray, idx, maxBytesToRead, ignoreNul);
   return UTF8Decoder.decode(heapOrArray.buffer ? heapOrArray.subarray(idx, endPtr) : new Uint8Array(heapOrArray.slice(idx, endPtr)));
 };
@@ -1116,7 +1107,6 @@ var lengthBytesUTF8 = str => {
 };
 
 var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
-  outIdx >>>= 0;
   // Parameter maxBytesToWrite is not optional. Negative values, 0, null,
   // undefined and false each don't write out any bytes.
   if (!(maxBytesToWrite > 0)) return 0;
@@ -1130,29 +1120,29 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
     var u = str.codePointAt(i);
     if (u <= 127) {
       if (outIdx >= endIdx) break;
-      heap[outIdx++ >>> 0] = u;
+      heap[outIdx++] = u;
     } else if (u <= 2047) {
       if (outIdx + 1 >= endIdx) break;
-      heap[outIdx++ >>> 0] = 192 | (u >> 6);
-      heap[outIdx++ >>> 0] = 128 | (u & 63);
+      heap[outIdx++] = 192 | (u >> 6);
+      heap[outIdx++] = 128 | (u & 63);
     } else if (u <= 65535) {
       if (outIdx + 2 >= endIdx) break;
-      heap[outIdx++ >>> 0] = 224 | (u >> 12);
-      heap[outIdx++ >>> 0] = 128 | ((u >> 6) & 63);
-      heap[outIdx++ >>> 0] = 128 | (u & 63);
+      heap[outIdx++] = 224 | (u >> 12);
+      heap[outIdx++] = 128 | ((u >> 6) & 63);
+      heap[outIdx++] = 128 | (u & 63);
     } else {
       if (outIdx + 3 >= endIdx) break;
-      heap[outIdx++ >>> 0] = 240 | (u >> 18);
-      heap[outIdx++ >>> 0] = 128 | ((u >> 12) & 63);
-      heap[outIdx++ >>> 0] = 128 | ((u >> 6) & 63);
-      heap[outIdx++ >>> 0] = 128 | (u & 63);
+      heap[outIdx++] = 240 | (u >> 18);
+      heap[outIdx++] = 128 | ((u >> 12) & 63);
+      heap[outIdx++] = 128 | ((u >> 6) & 63);
+      heap[outIdx++] = 128 | (u & 63);
       // Gotcha: if codePoint is over 0xFFFF, it is represented as a surrogate pair in UTF-16.
       // We need to manually skip over the second code unit for correct iteration.
       i++;
     }
   }
   // Null-terminate the pointer to the buffer.
-  heap[outIdx >>> 0] = 0;
+  heap[outIdx] = 0;
   return outIdx - startIdx;
 };
 
@@ -1636,7 +1626,7 @@ var MEMFS = {
               contents = Array.prototype.slice.call(contents, position, position + length);
             }
           }
-          HEAP8.set(contents, ptr >>> 0);
+          HEAP8.set(contents, ptr);
         }
       }
       return {
@@ -3457,13 +3447,10 @@ var FS = {
    * @param {boolean=} ignoreNul - If true, the function will not stop on a NUL character.
    * @return {string}
    */ var UTF8ToString = (ptr, maxBytesToRead, ignoreNul) => {
-  ptr >>>= 0;
   if (!ptr) return "";
   var end = findStringEnd(HEAPU8, ptr, maxBytesToRead, ignoreNul);
-  return UTF8Decoder.decode(HEAPU8.subarray(ptr >>> 0, end >>> 0));
+  return UTF8Decoder.decode(HEAPU8.subarray(ptr, end));
 };
-
-/** not-@type {!BigInt64Array} */ var HEAP64;
 
 var SYSCALLS = {
   currentUmask: 18,
@@ -3488,39 +3475,52 @@ var SYSCALLS = {
     return dir + "/" + path;
   },
   writeStat(buf, stat) {
-    HEAPU32[((buf) >>> 2) >>> 0] = stat.dev;
-    HEAPU32[(((buf) + (4)) >>> 2) >>> 0] = stat.mode;
-    HEAPU32[(((buf) + (8)) >>> 2) >>> 0] = stat.nlink;
-    HEAPU32[(((buf) + (12)) >>> 2) >>> 0] = stat.uid;
-    HEAPU32[(((buf) + (16)) >>> 2) >>> 0] = stat.gid;
-    HEAPU32[(((buf) + (20)) >>> 2) >>> 0] = stat.rdev;
-    HEAP64[(((buf) + (24)) >>> 3) >>> 0] = BigInt(stat.size);
-    HEAP32[(((buf) + (32)) >>> 2) >>> 0] = 4096;
-    HEAP32[(((buf) + (36)) >>> 2) >>> 0] = stat.blocks;
+    HEAPU32[((buf) >> 2)] = stat.dev;
+    HEAPU32[(((buf) + (4)) >> 2)] = stat.mode;
+    HEAPU32[(((buf) + (8)) >> 2)] = stat.nlink;
+    HEAPU32[(((buf) + (12)) >> 2)] = stat.uid;
+    HEAPU32[(((buf) + (16)) >> 2)] = stat.gid;
+    HEAPU32[(((buf) + (20)) >> 2)] = stat.rdev;
+    (tempI64 = [ stat.size >>> 0, (tempDouble = stat.size, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (24)) >> 2)] = tempI64[0], HEAP32[(((buf) + (28)) >> 2)] = tempI64[1]);
+    HEAP32[(((buf) + (32)) >> 2)] = 4096;
+    HEAP32[(((buf) + (36)) >> 2)] = stat.blocks;
     var atime = stat.atime.getTime();
     var mtime = stat.mtime.getTime();
     var ctime = stat.ctime.getTime();
-    HEAP64[(((buf) + (40)) >>> 3) >>> 0] = BigInt(Math.floor(atime / 1e3));
-    HEAPU32[(((buf) + (48)) >>> 2) >>> 0] = (atime % 1e3) * 1e3 * 1e3;
-    HEAP64[(((buf) + (56)) >>> 3) >>> 0] = BigInt(Math.floor(mtime / 1e3));
-    HEAPU32[(((buf) + (64)) >>> 2) >>> 0] = (mtime % 1e3) * 1e3 * 1e3;
-    HEAP64[(((buf) + (72)) >>> 3) >>> 0] = BigInt(Math.floor(ctime / 1e3));
-    HEAPU32[(((buf) + (80)) >>> 2) >>> 0] = (ctime % 1e3) * 1e3 * 1e3;
-    HEAP64[(((buf) + (88)) >>> 3) >>> 0] = BigInt(stat.ino);
+    (tempI64 = [ Math.floor(atime / 1e3) >>> 0, (tempDouble = Math.floor(atime / 1e3), 
+    (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (40)) >> 2)] = tempI64[0], HEAP32[(((buf) + (44)) >> 2)] = tempI64[1]);
+    HEAPU32[(((buf) + (48)) >> 2)] = (atime % 1e3) * 1e3 * 1e3;
+    (tempI64 = [ Math.floor(mtime / 1e3) >>> 0, (tempDouble = Math.floor(mtime / 1e3), 
+    (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (56)) >> 2)] = tempI64[0], HEAP32[(((buf) + (60)) >> 2)] = tempI64[1]);
+    HEAPU32[(((buf) + (64)) >> 2)] = (mtime % 1e3) * 1e3 * 1e3;
+    (tempI64 = [ Math.floor(ctime / 1e3) >>> 0, (tempDouble = Math.floor(ctime / 1e3), 
+    (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (72)) >> 2)] = tempI64[0], HEAP32[(((buf) + (76)) >> 2)] = tempI64[1]);
+    HEAPU32[(((buf) + (80)) >> 2)] = (ctime % 1e3) * 1e3 * 1e3;
+    (tempI64 = [ stat.ino >>> 0, (tempDouble = stat.ino, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (88)) >> 2)] = tempI64[0], HEAP32[(((buf) + (92)) >> 2)] = tempI64[1]);
     return 0;
   },
   writeStatFs(buf, stats) {
-    HEAPU32[(((buf) + (4)) >>> 2) >>> 0] = stats.bsize;
-    HEAPU32[(((buf) + (60)) >>> 2) >>> 0] = stats.bsize;
-    HEAP64[(((buf) + (8)) >>> 3) >>> 0] = BigInt(stats.blocks);
-    HEAP64[(((buf) + (16)) >>> 3) >>> 0] = BigInt(stats.bfree);
-    HEAP64[(((buf) + (24)) >>> 3) >>> 0] = BigInt(stats.bavail);
-    HEAP64[(((buf) + (32)) >>> 3) >>> 0] = BigInt(stats.files);
-    HEAP64[(((buf) + (40)) >>> 3) >>> 0] = BigInt(stats.ffree);
-    HEAPU32[(((buf) + (48)) >>> 2) >>> 0] = stats.fsid;
-    HEAPU32[(((buf) + (64)) >>> 2) >>> 0] = stats.flags;
+    HEAPU32[(((buf) + (4)) >> 2)] = stats.bsize;
+    HEAPU32[(((buf) + (60)) >> 2)] = stats.bsize;
+    (tempI64 = [ stats.blocks >>> 0, (tempDouble = stats.blocks, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (8)) >> 2)] = tempI64[0], HEAP32[(((buf) + (12)) >> 2)] = tempI64[1]);
+    (tempI64 = [ stats.bfree >>> 0, (tempDouble = stats.bfree, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (16)) >> 2)] = tempI64[0], HEAP32[(((buf) + (20)) >> 2)] = tempI64[1]);
+    (tempI64 = [ stats.bavail >>> 0, (tempDouble = stats.bavail, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (24)) >> 2)] = tempI64[0], HEAP32[(((buf) + (28)) >> 2)] = tempI64[1]);
+    (tempI64 = [ stats.files >>> 0, (tempDouble = stats.files, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (32)) >> 2)] = tempI64[0], HEAP32[(((buf) + (36)) >> 2)] = tempI64[1]);
+    (tempI64 = [ stats.ffree >>> 0, (tempDouble = stats.ffree, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[(((buf) + (40)) >> 2)] = tempI64[0], HEAP32[(((buf) + (44)) >> 2)] = tempI64[1]);
+    HEAPU32[(((buf) + (48)) >> 2)] = stats.fsid;
+    HEAPU32[(((buf) + (64)) >> 2)] = stats.flags;
     // ST_NOSUID
-    HEAPU32[(((buf) + (56)) >>> 2) >>> 0] = stats.namelen;
+    HEAPU32[(((buf) + (56)) >> 2)] = stats.namelen;
   },
   doMsync(addr, stream, len, flags, offset) {
     if (!FS.isFile(stream.node.mode)) {
@@ -3530,7 +3530,7 @@ var SYSCALLS = {
       // MAP_PRIVATE calls need not to be synced back to underlying fs
       return 0;
     }
-    var buffer = HEAPU8.subarray(addr >>> 0, addr + len >>> 0);
+    var buffer = HEAPU8.subarray(addr, addr + len);
     FS.msync(stream, buffer, offset, len, flags);
   },
   getStreamFromFD(fd) {
@@ -3554,14 +3554,7 @@ function ___syscall_dup(fd) {
   }
 }
 
-var INT53_MAX = 9007199254740992;
-
-var INT53_MIN = -9007199254740992;
-
-var bigintToI53Checked = num => (num < INT53_MIN || num > INT53_MAX) ? NaN : Number(num);
-
 function ___syscall_faccessat(dirfd, path, amode, flags) {
-  path >>>= 0;
   try {
     path = SYSCALLS.getStr(path);
     path = SYSCALLS.calculateAt(dirfd, path);
@@ -3592,7 +3585,7 @@ function ___syscall_faccessat(dirfd, path, amode, flags) {
 
 var syscallGetVarargI = () => {
   // the `+` prepended here is necessary to convince the JSCompiler that varargs is indeed a number.
-  var ret = HEAP32[((+SYSCALLS.varargs) >>> 2) >>> 0];
+  var ret = HEAP32[((+SYSCALLS.varargs) >> 2)];
   SYSCALLS.varargs += 4;
   return ret;
 };
@@ -3602,7 +3595,6 @@ var syscallGetVarargP = syscallGetVarargI;
 /** @type {!Int16Array} */ var HEAP16;
 
 function ___syscall_fcntl64(fd, cmd, varargs) {
-  varargs >>>= 0;
   SYSCALLS.varargs = varargs;
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
@@ -3642,7 +3634,7 @@ function ___syscall_fcntl64(fd, cmd, varargs) {
         var arg = syscallGetVarargP();
         var offset = 0;
         // We're always unlocked.
-        HEAP16[(((arg) + (offset)) >>> 1) >>> 0] = 2;
+        HEAP16[(((arg) + (offset)) >> 1)] = 2;
         return 0;
       }
 
@@ -3662,7 +3654,6 @@ function ___syscall_fcntl64(fd, cmd, varargs) {
 }
 
 function ___syscall_fstat64(fd, buf) {
-  buf >>>= 0;
   try {
     return SYSCALLS.writeStat(buf, FS.fstat(fd));
   } catch (e) {
@@ -3671,8 +3662,10 @@ function ___syscall_fstat64(fd, buf) {
   }
 }
 
-function ___syscall_ftruncate64(fd, length) {
-  length = bigintToI53Checked(length);
+var convertI32PairToI53Checked = (lo, hi) => ((hi + 2097152) >>> 0 < 4194305 - !!lo) ? (lo >>> 0) + hi * 4294967296 : NaN;
+
+function ___syscall_ftruncate64(fd, length_low, length_high) {
+  var length = convertI32PairToI53Checked(length_low, length_high);
   try {
     if (isNaN(length)) return -22;
     FS.ftruncate(fd, length);
@@ -3683,85 +3676,7 @@ function ___syscall_ftruncate64(fd, length) {
   }
 }
 
-var stringToUTF8 = (str, outPtr, maxBytesToWrite) => stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
-
-function ___syscall_getcwd(buf, size) {
-  buf >>>= 0;
-  size >>>= 0;
-  try {
-    if (!size) return -28;
-    var cwd = FS.cwd();
-    var cwdLengthInBytes = lengthBytesUTF8(cwd) + 1;
-    if (size < cwdLengthInBytes) return -68;
-    stringToUTF8(cwd, buf, size);
-    return cwdLengthInBytes;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
-function ___syscall_getdents64(fd, dirp, count) {
-  dirp >>>= 0;
-  count >>>= 0;
-  try {
-    var stream = SYSCALLS.getStreamFromFD(fd);
-    stream.getdents ||= FS.readdir(stream.path);
-    var struct_size = 280;
-    var pos = 0;
-    var off = FS.llseek(stream, 0, 1);
-    var startIdx = Math.floor(off / struct_size);
-    var endIdx = Math.min(stream.getdents.length, startIdx + Math.floor(count / struct_size));
-    for (var idx = startIdx; idx < endIdx; idx++) {
-      var id;
-      var type;
-      var name = stream.getdents[idx];
-      if (name === ".") {
-        id = stream.node.id;
-        type = 4;
-      } else if (name === "..") {
-        var lookup = FS.lookupPath(stream.path, {
-          parent: true
-        });
-        id = lookup.node.id;
-        type = 4;
-      } else {
-        var child;
-        try {
-          child = FS.lookupNode(stream.node, name);
-        } catch (e) {
-          // If the entry is not a directory, file, or symlink, nodefs
-          // lookupNode will raise EINVAL. Skip these and continue.
-          if (e?.errno === 28) {
-            continue;
-          }
-          throw e;
-        }
-        id = child.id;
-        type = FS.isChrdev(child.mode) ? 2 : // character device.
-        FS.isDir(child.mode) ? 4 : // directory
-        FS.isLink(child.mode) ? 10 : // symbolic link.
-        8;
-      }
-      HEAP64[((dirp + pos) >>> 3) >>> 0] = BigInt(id);
-      HEAP64[(((dirp + pos) + (8)) >>> 3) >>> 0] = BigInt((idx + 1) * struct_size);
-      HEAP16[(((dirp + pos) + (16)) >>> 1) >>> 0] = 280;
-      HEAP8[(dirp + pos) + (18) >>> 0] = type;
-      stringToUTF8(name, dirp + pos + 19, 256);
-      pos += struct_size;
-    }
-    FS.llseek(stream, idx * struct_size, 0);
-    return pos;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
-var ___syscall_getuid32 = () => 0;
-
 function ___syscall_ioctl(fd, op, varargs) {
-  varargs >>>= 0;
   SYSCALLS.varargs = varargs;
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
@@ -3778,12 +3693,12 @@ function ___syscall_ioctl(fd, op, varargs) {
         if (stream.tty.ops.ioctl_tcgets) {
           var termios = stream.tty.ops.ioctl_tcgets(stream);
           var argp = syscallGetVarargP();
-          HEAP32[((argp) >>> 2) >>> 0] = termios.c_iflag || 0;
-          HEAP32[(((argp) + (4)) >>> 2) >>> 0] = termios.c_oflag || 0;
-          HEAP32[(((argp) + (8)) >>> 2) >>> 0] = termios.c_cflag || 0;
-          HEAP32[(((argp) + (12)) >>> 2) >>> 0] = termios.c_lflag || 0;
+          HEAP32[((argp) >> 2)] = termios.c_iflag || 0;
+          HEAP32[(((argp) + (4)) >> 2)] = termios.c_oflag || 0;
+          HEAP32[(((argp) + (8)) >> 2)] = termios.c_cflag || 0;
+          HEAP32[(((argp) + (12)) >> 2)] = termios.c_lflag || 0;
           for (var i = 0; i < 32; i++) {
-            HEAP8[(argp + i) + (17) >>> 0] = termios.c_cc[i] || 0;
+            HEAP8[(argp + i) + (17)] = termios.c_cc[i] || 0;
           }
           return 0;
         }
@@ -3805,13 +3720,13 @@ function ___syscall_ioctl(fd, op, varargs) {
         if (!stream.tty) return -59;
         if (stream.tty.ops.ioctl_tcsets) {
           var argp = syscallGetVarargP();
-          var c_iflag = HEAP32[((argp) >>> 2) >>> 0];
-          var c_oflag = HEAP32[(((argp) + (4)) >>> 2) >>> 0];
-          var c_cflag = HEAP32[(((argp) + (8)) >>> 2) >>> 0];
-          var c_lflag = HEAP32[(((argp) + (12)) >>> 2) >>> 0];
+          var c_iflag = HEAP32[((argp) >> 2)];
+          var c_oflag = HEAP32[(((argp) + (4)) >> 2)];
+          var c_cflag = HEAP32[(((argp) + (8)) >> 2)];
+          var c_lflag = HEAP32[(((argp) + (12)) >> 2)];
           var c_cc = [];
           for (var i = 0; i < 32; i++) {
-            c_cc.push(HEAP8[(argp + i) + (17) >>> 0]);
+            c_cc.push(HEAP8[(argp + i) + (17)]);
           }
           return stream.tty.ops.ioctl_tcsets(stream.tty, op, {
             c_iflag,
@@ -3828,7 +3743,7 @@ function ___syscall_ioctl(fd, op, varargs) {
       {
         if (!stream.tty) return -59;
         var argp = syscallGetVarargP();
-        HEAP32[((argp) >>> 2) >>> 0] = 0;
+        HEAP32[((argp) >> 2)] = 0;
         return 0;
       }
 
@@ -3853,8 +3768,8 @@ function ___syscall_ioctl(fd, op, varargs) {
         if (stream.tty.ops.ioctl_tiocgwinsz) {
           var winsize = stream.tty.ops.ioctl_tiocgwinsz(stream.tty);
           var argp = syscallGetVarargP();
-          HEAP16[((argp) >>> 1) >>> 0] = winsize[0];
-          HEAP16[(((argp) + (2)) >>> 1) >>> 0] = winsize[1];
+          HEAP16[((argp) >> 1)] = winsize[0];
+          HEAP16[(((argp) + (2)) >> 1)] = winsize[1];
         }
         return 0;
       }
@@ -3884,8 +3799,6 @@ function ___syscall_ioctl(fd, op, varargs) {
 }
 
 function ___syscall_lstat64(path, buf) {
-  path >>>= 0;
-  buf >>>= 0;
   try {
     path = SYSCALLS.getStr(path);
     return SYSCALLS.writeStat(buf, FS.lstat(path));
@@ -3895,23 +3808,7 @@ function ___syscall_lstat64(path, buf) {
   }
 }
 
-function ___syscall_mkdirat(dirfd, path, mode) {
-  path >>>= 0;
-  try {
-    path = SYSCALLS.getStr(path);
-    path = SYSCALLS.calculateAt(dirfd, path);
-    mode &= ~SYSCALLS.currentUmask;
-    FS.mkdir(path, mode, 0);
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
 function ___syscall_newfstatat(dirfd, path, buf, flags) {
-  path >>>= 0;
-  buf >>>= 0;
   try {
     path = SYSCALLS.getStr(path);
     var nofollow = flags & 256;
@@ -3926,8 +3823,6 @@ function ___syscall_newfstatat(dirfd, path, buf, flags) {
 }
 
 function ___syscall_openat(dirfd, path, flags, varargs) {
-  path >>>= 0;
-  varargs >>>= 0;
   SYSCALLS.varargs = varargs;
   try {
     path = SYSCALLS.getStr(path);
@@ -3943,59 +3838,7 @@ function ___syscall_openat(dirfd, path, flags, varargs) {
   }
 }
 
-function ___syscall_readlinkat(dirfd, path, buf, bufsize) {
-  path >>>= 0;
-  buf >>>= 0;
-  bufsize >>>= 0;
-  try {
-    path = SYSCALLS.getStr(path);
-    path = SYSCALLS.calculateAt(dirfd, path);
-    if (bufsize <= 0) return -28;
-    var ret = FS.readlink(path);
-    var len = Math.min(bufsize, lengthBytesUTF8(ret));
-    var endChar = HEAP8[buf + len >>> 0];
-    stringToUTF8(ret, buf, bufsize + 1);
-    // readlink is one of the rare functions that write out a C string, but does never append a null to the output buffer(!)
-    // stringToUTF8() always appends a null byte, so restore the character under the null byte after the write.
-    HEAP8[buf + len >>> 0] = endChar;
-    return len;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
-function ___syscall_renameat(olddirfd, oldpath, newdirfd, newpath) {
-  oldpath >>>= 0;
-  newpath >>>= 0;
-  try {
-    oldpath = SYSCALLS.getStr(oldpath);
-    newpath = SYSCALLS.getStr(newpath);
-    oldpath = SYSCALLS.calculateAt(olddirfd, oldpath);
-    newpath = SYSCALLS.calculateAt(newdirfd, newpath);
-    FS.rename(oldpath, newpath);
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
-function ___syscall_rmdir(path) {
-  path >>>= 0;
-  try {
-    path = SYSCALLS.getStr(path);
-    FS.rmdir(path);
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
 function ___syscall_stat64(path, buf) {
-  path >>>= 0;
-  buf >>>= 0;
   try {
     path = SYSCALLS.getStr(path);
     return SYSCALLS.writeStat(buf, FS.stat(path));
@@ -4005,1017 +3848,24 @@ function ___syscall_stat64(path, buf) {
   }
 }
 
-function ___syscall_unlinkat(dirfd, path, flags) {
-  path >>>= 0;
-  try {
-    path = SYSCALLS.getStr(path);
-    path = SYSCALLS.calculateAt(dirfd, path);
-    if (!flags) {
-      FS.unlink(path);
-    } else if (flags === 512) {
-      FS.rmdir(path);
-    } else {
-      return -28;
-    }
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
-var readI53FromI64 = ptr => HEAPU32[((ptr) >>> 2) >>> 0] + HEAP32[(((ptr) + (4)) >>> 2) >>> 0] * 4294967296;
-
-function ___syscall_utimensat(dirfd, path, times, flags) {
-  path >>>= 0;
-  times >>>= 0;
-  try {
-    var nofollow = flags & 256;
-    path = SYSCALLS.getStr(path);
-    path = SYSCALLS.calculateAt(dirfd, path, true);
-    var now = Date.now(), atime, mtime;
-    if (!times) {
-      atime = now;
-      mtime = now;
-    } else {
-      var seconds = readI53FromI64(times);
-      var nanoseconds = HEAP32[(((times) + (8)) >>> 2) >>> 0];
-      if (nanoseconds == 1073741823) {
-        atime = now;
-      } else if (nanoseconds == 1073741822) {
-        atime = null;
-      } else {
-        atime = (seconds * 1e3) + (nanoseconds / (1e3 * 1e3));
-      }
-      times += 16;
-      seconds = readI53FromI64(times);
-      nanoseconds = HEAP32[(((times) + (8)) >>> 2) >>> 0];
-      if (nanoseconds == 1073741823) {
-        mtime = now;
-      } else if (nanoseconds == 1073741822) {
-        mtime = null;
-      } else {
-        mtime = (seconds * 1e3) + (nanoseconds / (1e3 * 1e3));
-      }
-    }
-    // null here means UTIME_OMIT was passed. If both were set to UTIME_OMIT then
-    // we can skip the call completely.
-    if ((mtime ?? atime) !== null) {
-      FS.utime(path, atime, mtime, nofollow);
-    }
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return -e.errno;
-  }
-}
-
 var __abort_js = () => abort("");
 
-var AsciiToString = ptr => {
-  ptr >>>= 0;
-  var str = "";
-  while (1) {
-    var ch = HEAPU8[ptr++ >>> 0];
-    if (!ch) return str;
-    str += String.fromCharCode(ch);
-  }
-};
-
-var awaitingDependencies = {};
-
-var registeredTypes = {};
-
-var typeDependencies = {};
-
-class BindingError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "BindingError";
-  }
-}
-
-var throwBindingError = message => {
-  throw new BindingError(message);
-};
-
-/** @param {Object=} options */ function sharedRegisterType(rawType, registeredInstance, options = {}) {
-  var name = registeredInstance.name;
-  if (!rawType) {
-    throwBindingError(`type "${name}" must have a positive integer typeid pointer`);
-  }
-  if (registeredTypes.hasOwnProperty(rawType)) {
-    if (options.ignoreDuplicateRegistrations) {
-      return;
-    } else {
-      throwBindingError(`Cannot register type '${name}' twice`);
-    }
-  }
-  registeredTypes[rawType] = registeredInstance;
-  delete typeDependencies[rawType];
-  if (awaitingDependencies.hasOwnProperty(rawType)) {
-    var callbacks = awaitingDependencies[rawType];
-    delete awaitingDependencies[rawType];
-    callbacks.forEach(cb => cb());
-  }
-}
-
-/** @param {Object=} options */ function registerType(rawType, registeredInstance, options = {}) {
-  return sharedRegisterType(rawType, registeredInstance, options);
-}
-
-/** @type {!Uint16Array} */ var HEAPU16;
-
-/** not-@type {!BigUint64Array} */ var HEAPU64;
-
-var integerReadValueFromPointer = (name, width, signed) => {
-  // integers are quite common, so generate very specialized functions
-  switch (width) {
-   case 1:
-    return signed ? pointer => HEAP8[pointer >>> 0] : pointer => HEAPU8[pointer >>> 0];
-
-   case 2:
-    return signed ? pointer => HEAP16[((pointer) >>> 1) >>> 0] : pointer => HEAPU16[((pointer) >>> 1) >>> 0];
-
-   case 4:
-    return signed ? pointer => HEAP32[((pointer) >>> 2) >>> 0] : pointer => HEAPU32[((pointer) >>> 2) >>> 0];
-
-   case 8:
-    return signed ? pointer => HEAP64[((pointer) >>> 3) >>> 0] : pointer => HEAPU64[((pointer) >>> 3) >>> 0];
-
-   default:
-    throw new TypeError(`invalid integer width (${width}): ${name}`);
-  }
-};
-
-/** @suppress {globalThis} */ var __embind_register_bigint = function(primitiveType, name, size, minRange, maxRange) {
-  primitiveType >>>= 0;
-  name >>>= 0;
-  size >>>= 0;
-  name = AsciiToString(name);
-  const isUnsignedType = minRange === 0n;
-  let fromWireType = value => value;
-  if (isUnsignedType) {
-    // uint64 get converted to int64 in ABI, fix them up like we do for 32-bit integers.
-    const bitSize = size * 8;
-    fromWireType = value => BigInt.asUintN(bitSize, value);
-    maxRange = fromWireType(maxRange);
-  }
-  registerType(primitiveType, {
-    name,
-    fromWireType,
-    toWireType: (destructors, value) => {
-      if (typeof value == "number") {
-        value = BigInt(value);
-      }
-      return value;
-    },
-    readValueFromPointer: integerReadValueFromPointer(name, size, !isUnsignedType),
-    destructorFunction: null
-  });
-};
-
-/** @suppress {globalThis} */ function __embind_register_bool(rawType, name, trueValue, falseValue) {
-  rawType >>>= 0;
-  name >>>= 0;
-  name = AsciiToString(name);
-  registerType(rawType, {
-    name,
-    fromWireType: function(wt) {
-      // ambiguous emscripten ABI: sometimes return values are
-      // true or false, and sometimes integers (0 or 1)
-      return !!wt;
-    },
-    toWireType: function(destructors, o) {
-      return o ? trueValue : falseValue;
-    },
-    readValueFromPointer: function(pointer) {
-      return this.fromWireType(HEAPU8[pointer >>> 0]);
-    },
-    destructorFunction: null
-  });
-}
-
-var emval_freelist = [];
-
-var emval_handles = [ 0, 1, , 1, null, 1, true, 1, false, 1 ];
-
-function __emval_decref(handle) {
-  handle >>>= 0;
-  if (handle > 9 && 0 === --emval_handles[handle + 1]) {
-    var value = emval_handles[handle];
-    emval_handles[handle] = undefined;
-    emval_freelist.push(handle);
-  }
-}
-
-var Emval = {
-  toValue: handle => {
-    if (!handle) {
-      throwBindingError(`Cannot use deleted val. handle = ${handle}`);
-    }
-    return emval_handles[handle];
-  },
-  toHandle: value => {
-    switch (value) {
-     case undefined:
-      return 2;
-
-     case null:
-      return 4;
-
-     case true:
-      return 6;
-
-     case false:
-      return 8;
-
-     default:
-      {
-        const handle = emval_freelist.pop() || emval_handles.length;
-        emval_handles[handle] = value;
-        emval_handles[handle + 1] = 1;
-        return handle;
-      }
-    }
-  }
-};
-
-/** @suppress {globalThis} */ function readPointer(pointer) {
-  return this.fromWireType(HEAPU32[((pointer) >>> 2) >>> 0]);
-}
-
-var EmValType = {
-  name: "emscripten::val",
-  fromWireType: handle => {
-    var rv = Emval.toValue(handle);
-    __emval_decref(handle);
-    return rv;
-  },
-  toWireType: (destructors, value) => Emval.toHandle(value),
-  readValueFromPointer: readPointer,
-  destructorFunction: null
-};
-
-function __embind_register_emval(rawType) {
-  rawType >>>= 0;
-  return registerType(rawType, EmValType);
-}
-
-/** @type {!Float32Array} */ var HEAPF32;
-
-/** @type {!Float64Array} */ var HEAPF64;
-
-var floatReadValueFromPointer = (name, width) => {
-  switch (width) {
-   case 4:
-    return function(pointer) {
-      return this.fromWireType(HEAPF32[((pointer) >>> 2) >>> 0]);
-    };
-
-   case 8:
-    return function(pointer) {
-      return this.fromWireType(HEAPF64[((pointer) >>> 3) >>> 0]);
-    };
-
-   default:
-    throw new TypeError(`invalid float width (${width}): ${name}`);
-  }
-};
-
-var __embind_register_float = function(rawType, name, size) {
-  rawType >>>= 0;
-  name >>>= 0;
-  size >>>= 0;
-  name = AsciiToString(name);
-  registerType(rawType, {
-    name,
-    fromWireType: value => value,
-    toWireType: (destructors, value) => value,
-    readValueFromPointer: floatReadValueFromPointer(name, size),
-    destructorFunction: null
-  });
-};
-
-var createNamedFunction = (name, func) => Object.defineProperty(func, "name", {
-  value: name
-});
-
-var runDestructors = destructors => {
-  while (destructors.length) {
-    var ptr = destructors.pop();
-    var del = destructors.pop();
-    del(ptr);
-  }
-};
-
-function usesDestructorStack(argTypes) {
-  // Skip return value at index 0 - it's not deleted here.
-  for (var i = 1; i < argTypes.length; ++i) {
-    // The type does not define a destructor function - must use dynamic stack
-    if (argTypes[i] !== null && argTypes[i].destructorFunction === undefined) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function craftInvokerFunction(humanName, argTypes, classType, cppInvokerFunc, cppTargetFunc, /** boolean= */ isAsync) {
-  // humanName: a human-readable string name for the function to be generated.
-  // argTypes: An array that contains the embind type objects for all types in the function signature.
-  //    argTypes[0] is the type object for the function return value.
-  //    argTypes[1] is the type object for function this object/class type, or null if not crafting an invoker for a class method.
-  //    argTypes[2...] are the actual function parameters.
-  // classType: The embind type object for the class to be bound, or null if this is not a method of a class.
-  // cppInvokerFunc: JS Function object to the C++-side function that interops into C++ code.
-  // cppTargetFunc: Function pointer (an integer to FUNCTION_TABLE) to the target C++ function the cppInvokerFunc will end up calling.
-  // isAsync: Optional. If true, returns an async function. Async bindings are only supported with JSPI.
-  var argCount = argTypes.length;
-  if (argCount < 2) {
-    throwBindingError("argTypes array size mismatch! Must at least get return value and receiver (this) types!");
-  }
-  var isClassMethodFunc = (argTypes[1] !== null && classType !== null);
-  // Free functions with signature "void function()" do not need an invoker that marshalls between wire types.
-  // TODO: This omits argument count check - enable only at -O3 or similar.
-  //    if (ENABLE_UNSAFE_OPTS && argCount == 2 && argTypes[0].name == 'void' && !isClassMethodFunc) {
-  //       return FUNCTION_TABLE[fn];
-  //    }
-  // Determine if we need to use a dynamic stack to store the destructors for the function parameters.
-  // TODO: Remove this completely once all function invokers are being dynamically generated.
-  var needsDestructorStack = usesDestructorStack(argTypes);
-  var returns = !argTypes[0].isVoid;
-  var expectedArgCount = argCount - 2;
-  var argsWired = new Array(expectedArgCount);
-  var invokerFuncArgs = [];
-  var destructors = [];
-  var invokerFn = function(...args) {
-    destructors.length = 0;
-    var thisWired;
-    invokerFuncArgs.length = isClassMethodFunc ? 2 : 1;
-    invokerFuncArgs[0] = cppTargetFunc;
-    if (isClassMethodFunc) {
-      thisWired = argTypes[1].toWireType(destructors, this);
-      invokerFuncArgs[1] = thisWired;
-    }
-    for (var i = 0; i < expectedArgCount; ++i) {
-      argsWired[i] = argTypes[i + 2].toWireType(destructors, args[i]);
-      invokerFuncArgs.push(argsWired[i]);
-    }
-    var rv = cppInvokerFunc(...invokerFuncArgs);
-    function onDone(rv) {
-      if (needsDestructorStack) {
-        runDestructors(destructors);
-      } else {
-        for (var i = isClassMethodFunc ? 1 : 2; i < argTypes.length; i++) {
-          var param = i === 1 ? thisWired : argsWired[i - 2];
-          if (argTypes[i].destructorFunction !== null) {
-            argTypes[i].destructorFunction(param);
-          }
-        }
-      }
-      if (returns) {
-        return argTypes[0].fromWireType(rv);
-      }
-    }
-    if (isAsync) {
-      return rv.then(onDone);
-    }
-    return onDone(rv);
-  };
-  return createNamedFunction(humanName, invokerFn);
-}
-
-var ensureOverloadTable = (proto, methodName, humanName) => {
-  if (undefined === proto[methodName].overloadTable) {
-    var prevFunc = proto[methodName];
-    // Inject an overload resolver function that routes to the appropriate overload based on the number of arguments.
-    proto[methodName] = function(...args) {
-      // TODO This check can be removed in -O3 level "unsafe" optimizations.
-      if (!proto[methodName].overloadTable.hasOwnProperty(args.length)) {
-        throwBindingError(`Function '${humanName}' called with an invalid number of arguments (${args.length}) - expects one of (${proto[methodName].overloadTable})!`);
-      }
-      return proto[methodName].overloadTable[args.length].apply(this, args);
-    };
-    // Move the previous function into the overload table.
-    proto[methodName].overloadTable = [];
-    proto[methodName].overloadTable[prevFunc.argCount] = prevFunc;
-  }
-};
-
-/** @param {number=} numArguments */ var exposePublicSymbol = (name, value, numArguments) => {
-  if (Module.hasOwnProperty(name)) {
-    if (undefined === numArguments || (undefined !== Module[name].overloadTable && undefined !== Module[name].overloadTable[numArguments])) {
-      throwBindingError(`Cannot register public name '${name}' twice`);
-    }
-    // We are exposing a function with the same name as an existing function. Create an overload table and a function selector
-    // that routes between the two.
-    ensureOverloadTable(Module, name, name);
-    if (Module[name].overloadTable.hasOwnProperty(numArguments)) {
-      throwBindingError(`Cannot register multiple overloads of a function with the same number of arguments (${numArguments})!`);
-    }
-    // Add the new function into the overload table.
-    Module[name].overloadTable[numArguments] = value;
-  } else {
-    Module[name] = value;
-    Module[name].argCount = numArguments;
-  }
-};
-
-var heap32VectorToArray = (count, firstElement) => {
-  var array = [];
-  for (var i = 0; i < count; i++) {
-    // TODO(https://github.com/emscripten-core/emscripten/issues/17310):
-    // Find a way to hoist the `>> 2` or `>> 3` out of this loop.
-    array.push(HEAPU32[(((firstElement) + (i * 4)) >>> 2) >>> 0]);
-  }
-  return array;
-};
-
-class InternalError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "InternalError";
-  }
-}
-
-var throwInternalError = message => {
-  throw new InternalError(message);
-};
-
-/** @param {number=} numArguments */ var replacePublicSymbol = (name, value, numArguments) => {
-  if (!Module.hasOwnProperty(name)) {
-    throwInternalError("Replacing nonexistent public symbol");
-  }
-  // If there's an overload table for this symbol, replace the symbol in the overload table instead.
-  if (undefined !== Module[name].overloadTable && undefined !== numArguments) {
-    Module[name].overloadTable[numArguments] = value;
-  } else {
-    Module[name] = value;
-    Module[name].argCount = numArguments;
-  }
-};
-
-var wasmTableMirror = [];
-
-var getWasmTableEntry = funcPtr => {
-  var func = wasmTableMirror[funcPtr];
-  if (!func) {
-    /** @suppress {checkTypes} */ wasmTableMirror[funcPtr] = func = wasmTable.get(funcPtr);
-    if (Asyncify.isAsyncExport(func)) {
-      wasmTableMirror[funcPtr] = func = Asyncify.makeAsyncFunction(func);
-    }
-  }
-  return func;
-};
-
-var dynCall = (sig, ptr, args = [], promising = false) => {
-  var func = getWasmTableEntry(ptr);
-  if (promising) {
-    func = WebAssembly.promising(func);
-  }
-  var rtn = func(...args);
-  function convert(rtn) {
-    return sig[0] == "p" ? rtn >>> 0 : rtn;
-  }
-  if (promising) {
-    return rtn.then(convert);
-  }
-  return convert(rtn);
-};
-
-var getDynCaller = (sig, ptr, promising = false) => (...args) => dynCall(sig, ptr, args, promising);
-
-var embind__requireFunction = (signature, rawFunction, isAsync = false) => {
-  signature = AsciiToString(signature);
-  function makeDynCaller() {
-    if (signature.includes("p")) {
-      return getDynCaller(signature, rawFunction, isAsync);
-    }
-    var rtn = getWasmTableEntry(rawFunction);
-    if (isAsync) {
-      rtn = WebAssembly.promising(rtn);
-    }
-    return rtn;
-  }
-  var fp = makeDynCaller();
-  if (typeof fp != "function") {
-    throwBindingError(`unknown function pointer with signature ${signature}: ${rawFunction}`);
-  }
-  return fp;
-};
-
-class UnboundTypeError extends Error {}
-
-var getTypeName = type => {
-  var ptr = ___getTypeName(type);
-  var rv = AsciiToString(ptr);
-  _free(ptr);
-  return rv;
-};
-
-var throwUnboundTypeError = (message, types) => {
-  var unboundTypes = [];
-  var seen = {};
-  function visit(type) {
-    if (seen[type]) {
-      return;
-    }
-    if (registeredTypes[type]) {
-      return;
-    }
-    if (typeDependencies[type]) {
-      typeDependencies[type].forEach(visit);
-      return;
-    }
-    unboundTypes.push(type);
-    seen[type] = true;
-  }
-  types.forEach(visit);
-  throw new UnboundTypeError(`${message}: ` + unboundTypes.map(getTypeName).join([ ", " ]));
-};
-
-var whenDependentTypesAreResolved = (myTypes, dependentTypes, getTypeConverters) => {
-  myTypes.forEach(type => typeDependencies[type] = dependentTypes);
-  function onComplete(typeConverters) {
-    var myTypeConverters = getTypeConverters(typeConverters);
-    if (myTypeConverters.length !== myTypes.length) {
-      throwInternalError("Mismatched type converter count");
-    }
-    for (var i = 0; i < myTypes.length; ++i) {
-      registerType(myTypes[i], myTypeConverters[i]);
-    }
-  }
-  var typeConverters = new Array(dependentTypes.length);
-  var unregisteredTypes = [];
-  var registered = 0;
-  for (let [i, dt] of dependentTypes.entries()) {
-    if (registeredTypes.hasOwnProperty(dt)) {
-      typeConverters[i] = registeredTypes[dt];
-    } else {
-      unregisteredTypes.push(dt);
-      if (!awaitingDependencies.hasOwnProperty(dt)) {
-        awaitingDependencies[dt] = [];
-      }
-      awaitingDependencies[dt].push(() => {
-        typeConverters[i] = registeredTypes[dt];
-        ++registered;
-        if (registered === unregisteredTypes.length) {
-          onComplete(typeConverters);
-        }
-      });
-    }
-  }
-  if (0 === unregisteredTypes.length) {
-    onComplete(typeConverters);
-  }
-};
-
-var getFunctionName = signature => {
-  signature = signature.trim();
-  const argsIndex = signature.indexOf("(");
-  if (argsIndex === -1) return signature;
-  return signature.slice(0, argsIndex);
-};
-
-function __embind_register_function(name, argCount, rawArgTypesAddr, signature, rawInvoker, fn, isAsync, isNonnullReturn) {
-  name >>>= 0;
-  rawArgTypesAddr >>>= 0;
-  signature >>>= 0;
-  rawInvoker >>>= 0;
-  fn >>>= 0;
-  var argTypes = heap32VectorToArray(argCount, rawArgTypesAddr);
-  name = AsciiToString(name);
-  name = getFunctionName(name);
-  rawInvoker = embind__requireFunction(signature, rawInvoker, isAsync);
-  exposePublicSymbol(name, function() {
-    throwUnboundTypeError(`Cannot call ${name} due to unbound types`, argTypes);
-  }, argCount - 1);
-  whenDependentTypesAreResolved([], argTypes, argTypes => {
-    var invokerArgsArray = [ argTypes[0], null ].concat(argTypes.slice(1));
-    replacePublicSymbol(name, craftInvokerFunction(name, invokerArgsArray, null, rawInvoker, fn, isAsync), argCount - 1);
-    return [];
-  });
-}
-
-/** @suppress {globalThis} */ var __embind_register_integer = function(primitiveType, name, size, minRange, maxRange) {
-  primitiveType >>>= 0;
-  name >>>= 0;
-  size >>>= 0;
-  name = AsciiToString(name);
-  const isUnsignedType = minRange === 0;
-  let fromWireType = value => value;
-  if (isUnsignedType) {
-    var bitshift = 32 - 8 * size;
-    fromWireType = value => (value << bitshift) >>> bitshift;
-    maxRange = fromWireType(maxRange);
-  }
-  registerType(primitiveType, {
-    name,
-    fromWireType,
-    toWireType: (destructors, value) => value,
-    readValueFromPointer: integerReadValueFromPointer(name, size, minRange !== 0),
-    destructorFunction: null
-  });
-};
-
-function __embind_register_memory_view(rawType, dataTypeIndex, name) {
-  rawType >>>= 0;
-  name >>>= 0;
-  var typeMapping = [ Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array ];
-  var TA = typeMapping[dataTypeIndex];
-  function decodeMemoryView(handle) {
-    var size = HEAPU32[((handle) >>> 2) >>> 0];
-    var data = HEAPU32[(((handle) + (4)) >>> 2) >>> 0];
-    return new TA(HEAP8.buffer, data, size);
-  }
-  name = AsciiToString(name);
-  registerType(rawType, {
-    name,
-    fromWireType: decodeMemoryView,
-    readValueFromPointer: decodeMemoryView
-  }, {
-    ignoreDuplicateRegistrations: true
-  });
-}
-
-function __embind_register_std_string(rawType, name) {
-  rawType >>>= 0;
-  name >>>= 0;
-  name = AsciiToString(name);
-  var stdStringIsUTF8 = true;
-  registerType(rawType, {
-    name,
-    // For some method names we use string keys here since they are part of
-    // the public/external API and/or used by the runtime-generated code.
-    fromWireType(value) {
-      var length = HEAPU32[((value) >>> 2) >>> 0];
-      var payload = value + 4;
-      var str;
-      if (stdStringIsUTF8) {
-        str = UTF8ToString(payload, length, true);
-      } else {
-        str = "";
-        for (var i = 0; i < length; ++i) {
-          str += String.fromCharCode(HEAPU8[payload + i >>> 0]);
-        }
-      }
-      _free(value);
-      return str;
-    },
-    toWireType(destructors, value) {
-      if (value instanceof ArrayBuffer) {
-        value = new Uint8Array(value);
-      }
-      var length;
-      var valueIsOfTypeString = (typeof value == "string");
-      // We accept `string` or array views with single byte elements
-      if (!(valueIsOfTypeString || (ArrayBuffer.isView(value) && value.BYTES_PER_ELEMENT == 1))) {
-        throwBindingError("Cannot pass non-string to std::string");
-      }
-      if (stdStringIsUTF8 && valueIsOfTypeString) {
-        length = lengthBytesUTF8(value);
-      } else {
-        length = value.length;
-      }
-      // assumes POINTER_SIZE alignment
-      var base = _malloc(4 + length + 1);
-      var ptr = base + 4;
-      HEAPU32[((base) >>> 2) >>> 0] = length;
-      if (valueIsOfTypeString) {
-        if (stdStringIsUTF8) {
-          stringToUTF8(value, ptr, length + 1);
-        } else {
-          for (var i = 0; i < length; ++i) {
-            var charCode = value.charCodeAt(i);
-            if (charCode > 255) {
-              _free(base);
-              throwBindingError("String has UTF-16 code units that do not fit in 8 bits");
-            }
-            HEAPU8[ptr + i >>> 0] = charCode;
-          }
-        }
-      } else {
-        HEAPU8.set(value, ptr >>> 0);
-      }
-      if (destructors !== null) {
-        destructors.push(_free, base);
-      }
-      return base;
-    },
-    readValueFromPointer: readPointer,
-    destructorFunction(ptr) {
-      _free(ptr);
-    }
-  });
-}
-
-var UTF16Decoder = new TextDecoder("utf-16le");
-
-var UTF16ToString = (ptr, maxBytesToRead, ignoreNul) => {
-  var idx = ((ptr) >>> 1);
-  var endIdx = findStringEnd(HEAPU16, idx, maxBytesToRead / 2, ignoreNul);
-  return UTF16Decoder.decode(HEAPU16.subarray(idx >>> 0, endIdx >>> 0));
-};
-
-var stringToUTF16 = (str, outPtr, maxBytesToWrite = 2147483647) => {
-  if (maxBytesToWrite < 2) return 0;
-  maxBytesToWrite -= 2;
-  // Null terminator.
-  var startPtr = outPtr;
-  var numCharsToWrite = (maxBytesToWrite < str.length * 2) ? (maxBytesToWrite / 2) : str.length;
-  for (var i = 0; i < numCharsToWrite; ++i) {
-    // charCodeAt returns a UTF-16 encoded code unit, so it can be directly written to the HEAP.
-    var codeUnit = str.charCodeAt(i);
-    // possibly a lead surrogate
-    HEAP16[((outPtr) >>> 1) >>> 0] = codeUnit;
-    outPtr += 2;
-  }
-  // Null-terminate the pointer to the HEAP.
-  HEAP16[((outPtr) >>> 1) >>> 0] = 0;
-  return outPtr - startPtr;
-};
-
-var lengthBytesUTF16 = str => str.length * 2;
-
-var UTF32ToString = (ptr, maxBytesToRead, ignoreNul) => {
-  var str = "";
-  var startIdx = ((ptr) >>> 2);
-  // If maxBytesToRead is not passed explicitly, it will be undefined, and this
-  // will always evaluate to true. This saves on code size.
-  for (var i = 0; !(i >= maxBytesToRead / 4); i++) {
-    var utf32 = HEAPU32[startIdx + i >>> 0];
-    if (!utf32 && !ignoreNul) break;
-    str += String.fromCodePoint(utf32);
-  }
-  return str;
-};
-
-var stringToUTF32 = (str, outPtr, maxBytesToWrite = 2147483647) => {
-  outPtr >>>= 0;
-  if (maxBytesToWrite < 4) return 0;
-  var startPtr = outPtr;
-  var endPtr = startPtr + maxBytesToWrite - 4;
-  for (var i = 0; i < str.length; ++i) {
-    var codePoint = str.codePointAt(i);
-    // Gotcha: if codePoint is over 0xFFFF, it is represented as a surrogate pair in UTF-16.
-    // We need to manually skip over the second code unit for correct iteration.
-    if (codePoint > 65535) {
-      i++;
-    }
-    HEAP32[((outPtr) >>> 2) >>> 0] = codePoint;
-    outPtr += 4;
-    if (outPtr + 4 > endPtr) break;
-  }
-  // Null-terminate the pointer to the HEAP.
-  HEAP32[((outPtr) >>> 2) >>> 0] = 0;
-  return outPtr - startPtr;
-};
-
-var lengthBytesUTF32 = str => {
-  var len = 0;
-  for (var i = 0; i < str.length; ++i) {
-    var codePoint = str.codePointAt(i);
-    // Gotcha: if codePoint is over 0xFFFF, it is represented as a surrogate pair in UTF-16.
-    // We need to manually skip over the second code unit for correct iteration.
-    if (codePoint > 65535) {
-      i++;
-    }
-    len += 4;
-  }
-  return len;
-};
-
-function __embind_register_std_wstring(rawType, charSize, name) {
-  rawType >>>= 0;
-  charSize >>>= 0;
-  name >>>= 0;
-  name = AsciiToString(name);
-  var decodeString, encodeString, lengthBytesUTF;
-  if (charSize === 2) {
-    decodeString = UTF16ToString;
-    encodeString = stringToUTF16;
-    lengthBytesUTF = lengthBytesUTF16;
-  } else {
-    decodeString = UTF32ToString;
-    encodeString = stringToUTF32;
-    lengthBytesUTF = lengthBytesUTF32;
-  }
-  registerType(rawType, {
-    name,
-    fromWireType: value => {
-      // Code mostly taken from _embind_register_std_string fromWireType
-      var length = HEAPU32[((value) >>> 2) >>> 0];
-      var str = decodeString(value + 4, length * charSize, true);
-      _free(value);
-      return str;
-    },
-    toWireType: (destructors, value) => {
-      if (!(typeof value == "string")) {
-        throwBindingError(`Cannot pass non-string to C++ string type ${name}`);
-      }
-      // assumes POINTER_SIZE alignment
-      var length = lengthBytesUTF(value);
-      var ptr = _malloc(4 + length + charSize);
-      HEAPU32[((ptr) >>> 2) >>> 0] = length / charSize;
-      encodeString(value, ptr + 4, length + charSize);
-      if (destructors !== null) {
-        destructors.push(_free, ptr);
-      }
-      return ptr;
-    },
-    readValueFromPointer: readPointer,
-    destructorFunction(ptr) {
-      _free(ptr);
-    }
-  });
-}
-
-var __embind_register_void = function(rawType, name) {
-  rawType >>>= 0;
-  name >>>= 0;
-  name = AsciiToString(name);
-  registerType(rawType, {
-    isVoid: true,
-    // void return values can be optimized out sometimes
-    name,
-    fromWireType: () => undefined,
-    // TODO: assert if anything else is given?
-    toWireType: (destructors, o) => undefined
-  });
-};
-
-var emval_methodCallers = [];
-
-var emval_addMethodCaller = caller => {
-  var id = emval_methodCallers.length;
-  emval_methodCallers.push(caller);
-  return id;
-};
-
-var requireRegisteredType = (rawType, humanName) => {
-  var impl = registeredTypes[rawType];
-  if (undefined === impl) {
-    throwBindingError(`${humanName} has unknown type ${getTypeName(rawType)}`);
-  }
-  return impl;
-};
-
-var emval_lookupTypes = (argCount, argTypes) => {
-  var a = new Array(argCount);
-  for (var i = 0; i < argCount; ++i) {
-    a[i] = requireRegisteredType(HEAPU32[(((argTypes) + (i * 4)) >>> 2) >>> 0], `parameter ${i}`);
-  }
-  return a;
-};
-
-var emval_returnValue = (toReturnWire, destructorsRef, handle) => {
-  var destructors = [];
-  var result = toReturnWire(destructors, handle);
-  if (destructors.length) {
-    // void, primitives and any other types w/o destructors don't need to allocate a handle
-    HEAPU32[((destructorsRef) >>> 2) >>> 0] = Emval.toHandle(destructors);
-  }
-  return result;
-};
-
-var emval_symbols = {};
-
-var getStringOrSymbol = address => {
-  var symbol = emval_symbols[address];
-  if (symbol === undefined) {
-    return AsciiToString(address);
-  }
-  return symbol;
-};
-
-var __emval_create_invoker = function(argCount, argTypesPtr, kind) {
-  argTypesPtr >>>= 0;
-  var GenericWireTypeSize = 8;
-  var [retType, ...argTypes] = emval_lookupTypes(argCount, argTypesPtr);
-  var toReturnWire = retType.toWireType.bind(retType);
-  var argFromPtr = argTypes.map(type => type.readValueFromPointer.bind(type));
-  argCount--;
-  // remove the extracted return type
-  var argN = new Array(argCount);
-  var invokerFunction = (handle, methodName, destructorsRef, args) => {
-    var offset = 0;
-    for (var i = 0; i < argCount; ++i) {
-      argN[i] = argFromPtr[i](args + offset);
-      offset += GenericWireTypeSize;
-    }
-    var rv;
-    switch (kind) {
-     case 0:
-      rv = Emval.toValue(handle).apply(null, argN);
-      break;
-
-     case 2:
-      rv = Reflect.construct(Emval.toValue(handle), argN);
-      break;
-
-     case 3:
-      // no-op, just return the argument
-      rv = argN[0];
-      break;
-
-     case 1:
-      rv = Emval.toValue(handle)[getStringOrSymbol(methodName)](...argN);
-      break;
-    }
-    return emval_returnValue(toReturnWire, destructorsRef, rv);
-  };
-  var functionName = `methodCaller<(${argTypes.map(t => t.name)}) => ${retType.name}>`;
-  return emval_addMethodCaller(createNamedFunction(functionName, invokerFunction));
-};
-
-function __emval_get_global(name) {
-  name >>>= 0;
-  if (!name) {
-    return Emval.toHandle(globalThis);
-  }
-  name = getStringOrSymbol(name);
-  return Emval.toHandle(globalThis[name]);
-}
-
-function __emval_get_property(handle, key) {
-  handle >>>= 0;
-  key >>>= 0;
-  handle = Emval.toValue(handle);
-  key = Emval.toValue(key);
-  return Emval.toHandle(handle[key]);
-}
-
-function __emval_incref(handle) {
-  handle >>>= 0;
-  if (handle > 9) {
-    emval_handles[handle + 1] += 1;
-  }
-}
-
-function __emval_instanceof(object, constructor) {
-  object >>>= 0;
-  constructor >>>= 0;
-  object = Emval.toValue(object);
-  constructor = Emval.toValue(constructor);
-  return object instanceof constructor;
-}
-
-function __emval_invoke(caller, handle, methodName, destructorsRef, args) {
-  caller >>>= 0;
-  handle >>>= 0;
-  methodName >>>= 0;
-  destructorsRef >>>= 0;
-  args >>>= 0;
-  return emval_methodCallers[caller](handle, methodName, destructorsRef, args);
-}
-
-function __emval_new_array() {
-  return Emval.toHandle([]);
-}
-
-function __emval_new_cstring(v) {
-  v >>>= 0;
-  return Emval.toHandle(getStringOrSymbol(v));
-}
-
-function __emval_new_object() {
-  return Emval.toHandle({});
-}
-
-function __emval_run_destructors(handle) {
-  handle >>>= 0;
-  var destructors = Emval.toValue(handle);
-  runDestructors(destructors);
-  __emval_decref(handle);
-}
-
-function __emval_set_property(handle, key, value) {
-  handle >>>= 0;
-  key >>>= 0;
-  value >>>= 0;
-  handle = Emval.toValue(handle);
-  key = Emval.toValue(key);
-  value = Emval.toValue(value);
-  handle[key] = value;
-}
-
-function __gmtime_js(time, tmPtr) {
-  time = bigintToI53Checked(time);
-  tmPtr >>>= 0;
+function __gmtime_js(time_low, time_high, tmPtr) {
+  var time = convertI32PairToI53Checked(time_low, time_high);
   var date = new Date(time * 1e3);
   if (isNaN(date.getTime())) {
     return 1;
   }
-  HEAP32[((tmPtr) >>> 2) >>> 0] = date.getUTCSeconds();
-  HEAP32[(((tmPtr) + (4)) >>> 2) >>> 0] = date.getUTCMinutes();
-  HEAP32[(((tmPtr) + (8)) >>> 2) >>> 0] = date.getUTCHours();
-  HEAP32[(((tmPtr) + (12)) >>> 2) >>> 0] = date.getUTCDate();
-  HEAP32[(((tmPtr) + (16)) >>> 2) >>> 0] = date.getUTCMonth();
-  HEAP32[(((tmPtr) + (20)) >>> 2) >>> 0] = date.getUTCFullYear() - 1900;
-  HEAP32[(((tmPtr) + (24)) >>> 2) >>> 0] = date.getUTCDay();
+  HEAP32[((tmPtr) >> 2)] = date.getUTCSeconds();
+  HEAP32[(((tmPtr) + (4)) >> 2)] = date.getUTCMinutes();
+  HEAP32[(((tmPtr) + (8)) >> 2)] = date.getUTCHours();
+  HEAP32[(((tmPtr) + (12)) >> 2)] = date.getUTCDate();
+  HEAP32[(((tmPtr) + (16)) >> 2)] = date.getUTCMonth();
+  HEAP32[(((tmPtr) + (20)) >> 2)] = date.getUTCFullYear() - 1900;
+  HEAP32[(((tmPtr) + (24)) >> 2)] = date.getUTCDay();
   var start = Date.UTC(date.getUTCFullYear(), 0, 1, 0, 0, 0, 0);
   var yday = ((date.getTime() - start) / (1e3 * 60 * 60 * 24)) | 0;
-  HEAP32[(((tmPtr) + (28)) >>> 2) >>> 0] = yday;
+  HEAP32[(((tmPtr) + (28)) >> 2)] = yday;
   return 0;
 }
 
@@ -5033,43 +3883,43 @@ var ydayFromDate = date => {
   return yday;
 };
 
-function __localtime_js(time, tmPtr) {
-  time = bigintToI53Checked(time);
-  tmPtr >>>= 0;
+function __localtime_js(time_low, time_high, tmPtr) {
+  var time = convertI32PairToI53Checked(time_low, time_high);
   var date = new Date(time * 1e3);
   if (isNaN(date.getTime())) {
     return 1;
   }
-  HEAP32[((tmPtr) >>> 2) >>> 0] = date.getSeconds();
-  HEAP32[(((tmPtr) + (4)) >>> 2) >>> 0] = date.getMinutes();
-  HEAP32[(((tmPtr) + (8)) >>> 2) >>> 0] = date.getHours();
-  HEAP32[(((tmPtr) + (12)) >>> 2) >>> 0] = date.getDate();
-  HEAP32[(((tmPtr) + (16)) >>> 2) >>> 0] = date.getMonth();
-  HEAP32[(((tmPtr) + (20)) >>> 2) >>> 0] = date.getFullYear() - 1900;
-  HEAP32[(((tmPtr) + (24)) >>> 2) >>> 0] = date.getDay();
+  HEAP32[((tmPtr) >> 2)] = date.getSeconds();
+  HEAP32[(((tmPtr) + (4)) >> 2)] = date.getMinutes();
+  HEAP32[(((tmPtr) + (8)) >> 2)] = date.getHours();
+  HEAP32[(((tmPtr) + (12)) >> 2)] = date.getDate();
+  HEAP32[(((tmPtr) + (16)) >> 2)] = date.getMonth();
+  HEAP32[(((tmPtr) + (20)) >> 2)] = date.getFullYear() - 1900;
+  HEAP32[(((tmPtr) + (24)) >> 2)] = date.getDay();
   var yday = ydayFromDate(date) | 0;
-  HEAP32[(((tmPtr) + (28)) >>> 2) >>> 0] = yday;
-  HEAP32[(((tmPtr) + (36)) >>> 2) >>> 0] = -(date.getTimezoneOffset() * 60);
+  HEAP32[(((tmPtr) + (28)) >> 2)] = yday;
+  HEAP32[(((tmPtr) + (36)) >> 2)] = -(date.getTimezoneOffset() * 60);
   // Attention: DST is in December in South, and some regions don't have DST at all.
   var start = new Date(date.getFullYear(), 0, 1);
   var summerOffset = new Date(date.getFullYear(), 6, 1).getTimezoneOffset();
   var winterOffset = start.getTimezoneOffset();
   var dst = (summerOffset != winterOffset && date.getTimezoneOffset() == Math.min(winterOffset, summerOffset)) | 0;
-  HEAP32[(((tmPtr) + (32)) >>> 2) >>> 0] = dst;
+  HEAP32[(((tmPtr) + (32)) >> 2)] = dst;
   return 0;
 }
 
+var setTempRet0 = val => __emscripten_tempret_set(val);
+
 var __mktime_js = function(tmPtr) {
-  tmPtr >>>= 0;
   var ret = (() => {
-    var date = new Date(HEAP32[(((tmPtr) + (20)) >>> 2) >>> 0] + 1900, HEAP32[(((tmPtr) + (16)) >>> 2) >>> 0], HEAP32[(((tmPtr) + (12)) >>> 2) >>> 0], HEAP32[(((tmPtr) + (8)) >>> 2) >>> 0], HEAP32[(((tmPtr) + (4)) >>> 2) >>> 0], HEAP32[((tmPtr) >>> 2) >>> 0], 0);
+    var date = new Date(HEAP32[(((tmPtr) + (20)) >> 2)] + 1900, HEAP32[(((tmPtr) + (16)) >> 2)], HEAP32[(((tmPtr) + (12)) >> 2)], HEAP32[(((tmPtr) + (8)) >> 2)], HEAP32[(((tmPtr) + (4)) >> 2)], HEAP32[((tmPtr) >> 2)], 0);
     if (isNaN(date.getTime())) {
       return -1;
     }
     // There's an ambiguous hour when the time goes back; the tm_isdst field is
     // used to disambiguate it.  Date() basically guesses, so we fix it up if it
     // guessed wrong, or fill in tm_isdst with the guess if it's -1.
-    var dst = HEAP32[(((tmPtr) + (32)) >>> 2) >>> 0];
+    var dst = HEAP32[(((tmPtr) + (32)) >> 2)];
     var guessedOffset = date.getTimezoneOffset();
     var start = new Date(date.getFullYear(), 0, 1);
     var summerOffset = new Date(date.getFullYear(), 6, 1).getTimezoneOffset();
@@ -5088,34 +3938,32 @@ var __mktime_js = function(tmPtr) {
         return -1;
       }
     }
-    HEAP32[(((tmPtr) + (32)) >>> 2) >>> 0] = dst;
-    HEAP32[(((tmPtr) + (24)) >>> 2) >>> 0] = date.getDay();
+    HEAP32[(((tmPtr) + (32)) >> 2)] = dst;
+    HEAP32[(((tmPtr) + (24)) >> 2)] = date.getDay();
     var yday = ydayFromDate(date) | 0;
-    HEAP32[(((tmPtr) + (28)) >>> 2) >>> 0] = yday;
+    HEAP32[(((tmPtr) + (28)) >> 2)] = yday;
     // To match expected behavior, update fields from date
-    HEAP32[((tmPtr) >>> 2) >>> 0] = date.getSeconds();
-    HEAP32[(((tmPtr) + (4)) >>> 2) >>> 0] = date.getMinutes();
-    HEAP32[(((tmPtr) + (8)) >>> 2) >>> 0] = date.getHours();
-    HEAP32[(((tmPtr) + (12)) >>> 2) >>> 0] = date.getDate();
-    HEAP32[(((tmPtr) + (16)) >>> 2) >>> 0] = date.getMonth();
-    HEAP32[(((tmPtr) + (20)) >>> 2) >>> 0] = date.getYear();
+    HEAP32[((tmPtr) >> 2)] = date.getSeconds();
+    HEAP32[(((tmPtr) + (4)) >> 2)] = date.getMinutes();
+    HEAP32[(((tmPtr) + (8)) >> 2)] = date.getHours();
+    HEAP32[(((tmPtr) + (12)) >> 2)] = date.getDate();
+    HEAP32[(((tmPtr) + (16)) >> 2)] = date.getMonth();
+    HEAP32[(((tmPtr) + (20)) >> 2)] = date.getYear();
     // Return time in seconds
     return date.getTime() / 1e3;
   })();
-  return BigInt(ret);
+  return (setTempRet0((tempDouble = ret, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0)), 
+  ret >>> 0);
 };
 
-function __mmap_js(len, prot, flags, fd, offset, allocated, addr) {
-  len >>>= 0;
-  offset = bigintToI53Checked(offset);
-  allocated >>>= 0;
-  addr >>>= 0;
+function __mmap_js(len, prot, flags, fd, offset_low, offset_high, allocated, addr) {
+  var offset = convertI32PairToI53Checked(offset_low, offset_high);
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
     var res = FS.mmap(stream, len, offset, prot, flags);
     var ptr = res.ptr;
-    HEAP32[((allocated) >>> 2) >>> 0] = res.allocated;
-    HEAPU32[((addr) >>> 2) >>> 0] = ptr;
+    HEAP32[((allocated) >> 2)] = res.allocated;
+    HEAPU32[((addr) >> 2)] = ptr;
     return 0;
   } catch (e) {
     if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
@@ -5123,10 +3971,8 @@ function __mmap_js(len, prot, flags, fd, offset, allocated, addr) {
   }
 }
 
-function __munmap_js(addr, len, prot, flags, fd, offset) {
-  addr >>>= 0;
-  len >>>= 0;
-  offset = bigintToI53Checked(offset);
+function __munmap_js(addr, len, prot, flags, fd, offset_low, offset_high) {
+  var offset = convertI32PairToI53Checked(offset_low, offset_high);
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
     if (prot & 2) {
@@ -5138,11 +3984,9 @@ function __munmap_js(addr, len, prot, flags, fd, offset) {
   }
 }
 
-var __tzset_js = function(timezone, daylight, std_name, dst_name) {
-  timezone >>>= 0;
-  daylight >>>= 0;
-  std_name >>>= 0;
-  dst_name >>>= 0;
+var stringToUTF8 = (str, outPtr, maxBytesToWrite) => stringToUTF8Array(str, HEAPU8, outPtr, maxBytesToWrite);
+
+var __tzset_js = (timezone, daylight, std_name, dst_name) => {
   // TODO: Use (malleable) environment variables instead of system settings.
   var currentYear = (new Date).getFullYear();
   var winter = new Date(currentYear, 0, 1);
@@ -5161,8 +4005,8 @@ var __tzset_js = function(timezone, daylight, std_name, dst_name) {
   // Coordinated Universal Time (UTC) and local standard time."), the same
   // as returned by stdTimezoneOffset.
   // See http://pubs.opengroup.org/onlinepubs/009695399/functions/tzset.html
-  HEAPU32[((timezone) >>> 2) >>> 0] = stdTimezoneOffset * 60;
-  HEAP32[((daylight) >>> 2) >>> 0] = Number(winterOffset != summerOffset);
+  HEAPU32[((timezone) >> 2)] = stdTimezoneOffset * 60;
+  HEAP32[((daylight) >> 2)] = Number(winterOffset != summerOffset);
   var extractZone = timezoneOffset => {
     // Why inverse sign?
     // Read here https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/getTimezoneOffset
@@ -5192,9 +4036,8 @@ var nowIsMonotonic = 1;
 
 var checkWasiClock = clock_id => clock_id >= 0 && clock_id <= 3;
 
-function _clock_time_get(clk_id, ignored_precision, ptime) {
-  ignored_precision = bigintToI53Checked(ignored_precision);
-  ptime >>>= 0;
+function _clock_time_get(clk_id, ignored_precision_low, ignored_precision_high, ptime) {
+  var ignored_precision = convertI32PairToI53Checked(ignored_precision_low, ignored_precision_high);
   if (!checkWasiClock(clk_id)) {
     return 28;
   }
@@ -5209,25 +4052,28 @@ function _clock_time_get(clk_id, ignored_precision, ptime) {
   }
   // "now" is in ms, and wasi times are in ns.
   var nsec = Math.round(now * 1e3 * 1e3);
-  HEAP64[((ptime) >>> 3) >>> 0] = BigInt(nsec);
+  (tempI64 = [ nsec >>> 0, (tempDouble = nsec, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+  HEAP32[((ptime) >> 2)] = tempI64[0], HEAP32[(((ptime) + (4)) >> 2)] = tempI64[1]);
   return 0;
 }
 
 var readEmAsmArgsArray = [];
+
+/** @type {!Float64Array} */ var HEAPF64;
 
 var readEmAsmArgs = (sigPtr, buf) => {
   readEmAsmArgsArray.length = 0;
   var ch;
   // Most arguments are i32s, so shift the buffer pointer so it is a plain
   // index into HEAP32.
-  while (ch = HEAPU8[sigPtr++ >>> 0]) {
+  while (ch = HEAPU8[sigPtr++]) {
     // Floats are always passed as doubles, so all types except for 'i'
     // are 8 bytes and require alignment.
     var wide = (ch != 105);
     wide &= (ch != 112);
     buf += wide && (buf % 8) ? 4 : 0;
     readEmAsmArgsArray.push(// Special case for pointers under wasm64 or CAN_ADDRESS_2GB mode.
-    ch == 112 ? HEAPU32[((buf) >>> 2) >>> 0] : ch == 106 ? HEAP64[((buf) >>> 3) >>> 0] : ch == 105 ? HEAP32[((buf) >>> 2) >>> 0] : HEAPF64[((buf) >>> 3) >>> 0]);
+    ch == 112 ? HEAPU32[((buf) >> 2)] : ch == 105 ? HEAP32[((buf) >> 2)] : HEAPF64[((buf) >> 3)]);
     buf += wide ? 8 : 4;
   }
   return readEmAsmArgsArray;
@@ -5238,36 +4084,21 @@ var runEmAsmFunction = (code, sigPtr, argbuf) => {
   return ASM_CONSTS[code](...args);
 };
 
-function _emscripten_asm_const_int(code, sigPtr, argbuf) {
-  code >>>= 0;
-  sigPtr >>>= 0;
-  argbuf >>>= 0;
-  return runEmAsmFunction(code, sigPtr, argbuf);
-}
+var _emscripten_asm_const_int = (code, sigPtr, argbuf) => runEmAsmFunction(code, sigPtr, argbuf);
 
-function _emscripten_errn(str, len) {
-  str >>>= 0;
-  len >>>= 0;
-  return err(UTF8ToString(str, len));
-}
+var _emscripten_errn = (str, len) => err(UTF8ToString(str, len));
 
 var getHeapMax = () => // Stay one Wasm page short of 4GB: while e.g. Chrome is able to allocate
 // full 4GB Wasm memories, the size will wrap back to 0 bytes in Wasm side
 // for any code that deals with heap sizes, which would require special
 // casing all heap size related code to treat 0 specially.
-4294901760;
+2147483648;
 
-function _emscripten_get_heap_max() {
-  return getHeapMax();
-}
+var _emscripten_get_heap_max = () => getHeapMax();
 
-var _emscripten_has_asyncify = () => 2;
+var _emscripten_has_asyncify = () => 0;
 
-function _emscripten_outn(str, len) {
-  str >>>= 0;
-  len >>>= 0;
-  return out(UTF8ToString(str, len));
-}
+var _emscripten_outn = (str, len) => out(UTF8ToString(str, len));
 
 var UNWIND_CACHE = {};
 
@@ -5304,7 +4135,7 @@ var saveInUnwindCache = callstack => {
 
 var jsStackTrace = () => (new Error).stack.toString();
 
-function _emscripten_stack_snapshot() {
+var _emscripten_stack_snapshot = () => {
   var callstack = jsStackTrace().split("\n");
   if (callstack[0] == "Error") {
     callstack.shift();
@@ -5315,10 +4146,9 @@ function _emscripten_stack_snapshot() {
   UNWIND_CACHE.last_addr = convertFrameToPC(callstack[3]);
   UNWIND_CACHE.last_stack = callstack;
   return UNWIND_CACHE.last_addr;
-}
+};
 
-function _emscripten_pc_get_function(pc) {
-  pc >>>= 0;
+var _emscripten_pc_get_function = pc => {
   var frame = UNWIND_CACHE[pc];
   if (!frame) return 0;
   var name;
@@ -5341,7 +4171,7 @@ function _emscripten_pc_get_function(pc) {
   _free(_emscripten_pc_get_function.ret ?? 0);
   _emscripten_pc_get_function.ret = stringToNewUTF8(name);
   return _emscripten_pc_get_function.ret;
-}
+};
 
 var growMemory = size => {
   var oldHeapSize = wasmMemory.buffer.byteLength;
@@ -5355,9 +4185,10 @@ var growMemory = size => {
   } catch (e) {}
 };
 
-function _emscripten_resize_heap(requestedSize) {
-  requestedSize >>>= 0;
+var _emscripten_resize_heap = requestedSize => {
   var oldSize = HEAPU8.length;
+  // With CAN_ADDRESS_2GB or MEMORY64, pointers are already unsigned.
+  requestedSize >>>= 0;
   // With multithreaded builds, races can happen (another thread might increase the size
   // in between), so return a failure, and let the caller retry.
   // Memory resize rules:
@@ -5397,18 +4228,9 @@ function _emscripten_resize_heap(requestedSize) {
     }
   }
   return false;
-}
-
-var _emscripten_sleep = function(ms) {
-  let innerFunc = () => new Promise(resolve => setTimeout(resolve, ms));
-  return Asyncify.handleAsync(innerFunc);
 };
 
-_emscripten_sleep.isAsync = true;
-
-function _emscripten_stack_unwind_buffer(addr, buffer, count) {
-  addr >>>= 0;
-  buffer >>>= 0;
+var _emscripten_stack_unwind_buffer = (addr, buffer, count) => {
   var stack;
   if (UNWIND_CACHE.last_addr == addr) {
     stack = UNWIND_CACHE.last_stack;
@@ -5424,10 +4246,10 @@ function _emscripten_stack_unwind_buffer(addr, buffer, count) {
     ++offset;
   }
   for (var i = 0; i < count && stack[i + offset]; ++i) {
-    HEAPU32[(((buffer) + (i * 4)) >>> 2) >>> 0] = convertFrameToPC(stack[i + offset]);
+    HEAPU32[(((buffer) + (i * 4)) >> 2)] = convertFrameToPC(stack[i + offset]);
   }
   return i;
-}
+};
 
 var GLctx;
 
@@ -5497,6 +4319,10 @@ var registerPreMainLoop = f => {
 };
 
 var webglBufferSubData = (target, offset, size, data, src = HEAPU8) => {
+  if (GL.currentContext.version >= 2) {
+    size && GLctx.bufferSubData(target, offset, src, data, size);
+    return;
+  }
   GLctx.bufferSubData(target, offset, src.subarray(data, data + size));
 };
 
@@ -5549,7 +4375,7 @@ var GL = {
       } else {
         GL.recordError(1282);
       }
-      HEAP32[(((buffers) + (i * 4)) >>> 2) >>> 0] = id;
+      HEAP32[(((buffers) + (i * 4)) >> 2)] = id;
     }
   },
   MAX_TEMP_BUFFER_SIZE: 2097152,
@@ -5652,8 +4478,8 @@ var GL = {
   getSource: (shader, count, string, length) => {
     var source = "";
     for (var i = 0; i < count; ++i) {
-      var len = length ? HEAPU32[(((length) + (i * 4)) >>> 2) >>> 0] : undefined;
-      source += UTF8ToString(HEAPU32[(((string) + (i * 4)) >>> 2) >>> 0], len);
+      var len = length ? HEAPU32[(((length) + (i * 4)) >> 2)] : undefined;
+      source += UTF8ToString(HEAPU32[(((string) + (i * 4)) >> 2)], len);
     }
     return source;
   },
@@ -5835,28 +4661,26 @@ var findCanvasEventTarget = target => {
   return findEventTarget(target);
 };
 
-function _emscripten_webgl_do_create_context(target, attributes) {
-  target >>>= 0;
-  attributes >>>= 0;
-  var attr32 = ((attributes) >>> 2);
-  var powerPreference = HEAP32[attr32 + (8 >> 2) >>> 0];
+var _emscripten_webgl_do_create_context = (target, attributes) => {
+  var attr32 = ((attributes) >> 2);
+  var powerPreference = HEAP32[attr32 + (8 >> 2)];
   var contextAttributes = {
-    "alpha": !!HEAP8[attributes + 0 >>> 0],
-    "depth": !!HEAP8[attributes + 1 >>> 0],
-    "stencil": !!HEAP8[attributes + 2 >>> 0],
-    "antialias": !!HEAP8[attributes + 3 >>> 0],
-    "premultipliedAlpha": !!HEAP8[attributes + 4 >>> 0],
-    "preserveDrawingBuffer": !!HEAP8[attributes + 5 >>> 0],
+    "alpha": !!HEAP8[attributes + 0],
+    "depth": !!HEAP8[attributes + 1],
+    "stencil": !!HEAP8[attributes + 2],
+    "antialias": !!HEAP8[attributes + 3],
+    "premultipliedAlpha": !!HEAP8[attributes + 4],
+    "preserveDrawingBuffer": !!HEAP8[attributes + 5],
     "powerPreference": webglPowerPreferences[powerPreference],
-    "failIfMajorPerformanceCaveat": !!HEAP8[attributes + 12 >>> 0],
-    "desynchronized": !!HEAP8[attributes + 33 >>> 0],
+    "failIfMajorPerformanceCaveat": !!HEAP8[attributes + 12],
+    "desynchronized": !!HEAP8[attributes + 33],
     // The following are not predefined WebGL context attributes in the WebGL specification, so the property names can be minified by Closure.
-    majorVersion: HEAP32[attr32 + (16 >> 2) >>> 0],
-    minorVersion: HEAP32[attr32 + (20 >> 2) >>> 0],
-    enableExtensionsByDefault: HEAP8[attributes + 24 >>> 0],
-    explicitSwapControl: HEAP8[attributes + 25 >>> 0],
-    proxyContextToMainThread: HEAP32[attr32 + (28 >> 2) >>> 0],
-    renderViaOffscreenBackBuffer: HEAP8[attributes + 32 >>> 0]
+    majorVersion: HEAP32[attr32 + (16 >> 2)],
+    minorVersion: HEAP32[attr32 + (20 >> 2)],
+    enableExtensionsByDefault: HEAP8[attributes + 24],
+    explicitSwapControl: HEAP8[attributes + 25],
+    proxyContextToMainThread: HEAP32[attr32 + (28 >> 2)],
+    renderViaOffscreenBackBuffer: HEAP8[attributes + 32]
   };
   var canvas = findCanvasEventTarget(target);
   if (!canvas) {
@@ -5867,51 +4691,45 @@ function _emscripten_webgl_do_create_context(target, attributes) {
   }
   var contextHandle = GL.createContext(canvas, contextAttributes);
   return contextHandle;
-}
+};
 
 var _emscripten_webgl_create_context = _emscripten_webgl_do_create_context;
 
-function _emscripten_webgl_destroy_context(contextHandle) {
-  contextHandle >>>= 0;
+var _emscripten_webgl_destroy_context = contextHandle => {
   if (GL.currentContext == contextHandle) GL.currentContext = 0;
   GL.deleteContext(contextHandle);
-}
+};
 
-function _emscripten_webgl_get_context_attributes(c, a) {
-  c >>>= 0;
-  a >>>= 0;
+var _emscripten_webgl_get_context_attributes = (c, a) => {
   if (!a) return -5;
   c = GL.contexts[c];
   if (!c) return -3;
   var t = c.GLctx?.getContextAttributes();
   if (!t) return -3;
-  HEAP8[a >>> 0] = t.alpha;
-  HEAP8[(a) + (1) >>> 0] = t.depth;
-  HEAP8[(a) + (2) >>> 0] = t.stencil;
-  HEAP8[(a) + (3) >>> 0] = t.antialias;
-  HEAP8[(a) + (4) >>> 0] = t.premultipliedAlpha;
-  HEAP8[(a) + (5) >>> 0] = t.preserveDrawingBuffer;
+  HEAP8[a] = t.alpha;
+  HEAP8[(a) + (1)] = t.depth;
+  HEAP8[(a) + (2)] = t.stencil;
+  HEAP8[(a) + (3)] = t.antialias;
+  HEAP8[(a) + (4)] = t.premultipliedAlpha;
+  HEAP8[(a) + (5)] = t.preserveDrawingBuffer;
   var power = t["powerPreference"] && webglPowerPreferences.indexOf(t["powerPreference"]);
-  HEAP32[(((a) + (8)) >>> 2) >>> 0] = power;
-  HEAP8[(a) + (12) >>> 0] = t.failIfMajorPerformanceCaveat;
-  HEAP8[(a) + (33) >>> 0] = t.desynchronized;
-  HEAP32[(((a) + (16)) >>> 2) >>> 0] = c.version;
-  HEAP32[(((a) + (20)) >>> 2) >>> 0] = 0;
-  HEAP8[(a) + (24) >>> 0] = c.attributes.enableExtensionsByDefault;
+  HEAP32[(((a) + (8)) >> 2)] = power;
+  HEAP8[(a) + (12)] = t.failIfMajorPerformanceCaveat;
+  HEAP8[(a) + (33)] = t.desynchronized;
+  HEAP32[(((a) + (16)) >> 2)] = c.version;
+  HEAP32[(((a) + (20)) >> 2)] = 0;
+  HEAP8[(a) + (24)] = c.attributes.enableExtensionsByDefault;
   return 0;
-}
+};
 
-function _emscripten_webgl_do_get_current_context() {
-  return GL.currentContext ? GL.currentContext.handle : 0;
-}
+var _emscripten_webgl_do_get_current_context = () => GL.currentContext ? GL.currentContext.handle : 0;
 
 var _emscripten_webgl_get_current_context = _emscripten_webgl_do_get_current_context;
 
-function _emscripten_webgl_make_context_current(contextHandle) {
-  contextHandle >>>= 0;
+var _emscripten_webgl_make_context_current = contextHandle => {
   var success = GL.makeContextCurrent(contextHandle);
   return success ? 0 : -5;
-}
+};
 
 var stackAlloc = sz => __emscripten_stack_alloc(sz);
 
@@ -5923,10 +4741,24 @@ var stringToUTF8OnStack = str => {
 };
 
 var writeI53ToI64 = (ptr, num) => {
-  HEAPU32[((ptr) >>> 2) >>> 0] = num;
-  var lower = HEAPU32[((ptr) >>> 2) >>> 0];
-  HEAPU32[(((ptr) + (4)) >>> 2) >>> 0] = (num - lower) / 4294967296;
+  HEAPU32[((ptr) >> 2)] = num;
+  var lower = HEAPU32[((ptr) >> 2)];
+  HEAPU32[(((ptr) + (4)) >> 2)] = (num - lower) / 4294967296;
 };
+
+var readI53FromI64 = ptr => HEAPU32[((ptr) >> 2)] + HEAP32[(((ptr) + (4)) >> 2)] * 4294967296;
+
+var wasmTableMirror = [];
+
+var getWasmTableEntry = funcPtr => {
+  var func = wasmTableMirror[funcPtr];
+  if (!func) {
+    /** @suppress {checkTypes} */ wasmTableMirror[funcPtr] = func = wasmTable.get(funcPtr);
+  }
+  return func;
+};
+
+/** @type {!Float32Array} */ var HEAPF32;
 
 var WebGPU = {
   Internals: {
@@ -5937,9 +4769,7 @@ var WebGPU = {
     },
     bufferOnUnmaps: [],
     futures: [],
-    futureInsert: (futureId, promise) => {
-      WebGPU.Internals.futures[futureId] = new Promise(resolve => promise.finally(() => resolve(futureId)));
-    }
+    futureInsert: (futureId, promise) => {}
   },
   getJsObject: ptr => {
     if (!ptr) return undefined;
@@ -6067,27 +4897,27 @@ var WebGPU = {
     stackRestore(sp);
   },
   iterateExtensions: (root, handlers) => {
-    for (var ptr = HEAPU32[((root) >>> 2) >>> 0]; ptr; ptr = HEAPU32[((ptr) >>> 2) >>> 0]) {
-      var sType = HEAP32[(((ptr) + (4)) >>> 2) >>> 0];
+    for (var ptr = HEAPU32[((root) >> 2)]; ptr; ptr = HEAPU32[((ptr) >> 2)]) {
+      var sType = HEAP32[(((ptr) + (4)) >> 2)];
       // This will crash if there's no handler indicating either a bogus
       // sType, or one we haven't implemented yet.
       var handler = handlers[sType](ptr);
     }
   },
   setStringView: (ptr, data, length) => {
-    HEAPU32[((ptr) >>> 2) >>> 0] = data;
-    HEAPU32[(((ptr) + (4)) >>> 2) >>> 0] = length;
+    HEAPU32[((ptr) >> 2)] = data;
+    HEAPU32[(((ptr) + (4)) >> 2)] = length;
   },
   makeStringFromStringView: stringViewPtr => {
-    var ptr = HEAPU32[((stringViewPtr) >>> 2) >>> 0];
-    var length = HEAPU32[(((stringViewPtr) + (4)) >>> 2) >>> 0];
+    var ptr = HEAPU32[((stringViewPtr) >> 2)];
+    var length = HEAPU32[(((stringViewPtr) + (4)) >> 2)];
     // UTF8ToString stops at the first null terminator character in the
     // string regardless of the length.
     return UTF8ToString(ptr, length);
   },
   makeStringFromOptionalStringView: stringViewPtr => {
-    var ptr = HEAPU32[((stringViewPtr) >>> 2) >>> 0];
-    var length = HEAPU32[(((stringViewPtr) + (4)) >>> 2) >>> 0];
+    var ptr = HEAPU32[((stringViewPtr) >> 2)];
+    var length = HEAPU32[(((stringViewPtr) + (4)) >> 2)];
     // If we don't have a valid string pointer, just return undefined when
     // optional.
     if (!ptr) {
@@ -6101,30 +4931,30 @@ var WebGPU = {
     return UTF8ToString(ptr, length);
   },
   makeColor: ptr => ({
-    "r": HEAPF64[((ptr) >>> 3) >>> 0],
-    "g": HEAPF64[(((ptr) + (8)) >>> 3) >>> 0],
-    "b": HEAPF64[(((ptr) + (16)) >>> 3) >>> 0],
-    "a": HEAPF64[(((ptr) + (24)) >>> 3) >>> 0]
+    "r": HEAPF64[((ptr) >> 3)],
+    "g": HEAPF64[(((ptr) + (8)) >> 3)],
+    "b": HEAPF64[(((ptr) + (16)) >> 3)],
+    "a": HEAPF64[(((ptr) + (24)) >> 3)]
   }),
   makeExtent3D: ptr => ({
-    "width": HEAPU32[((ptr) >>> 2) >>> 0],
-    "height": HEAPU32[(((ptr) + (4)) >>> 2) >>> 0],
-    "depthOrArrayLayers": HEAPU32[(((ptr) + (8)) >>> 2) >>> 0]
+    "width": HEAPU32[((ptr) >> 2)],
+    "height": HEAPU32[(((ptr) + (4)) >> 2)],
+    "depthOrArrayLayers": HEAPU32[(((ptr) + (8)) >> 2)]
   }),
   makeOrigin3D: ptr => ({
-    "x": HEAPU32[((ptr) >>> 2) >>> 0],
-    "y": HEAPU32[(((ptr) + (4)) >>> 2) >>> 0],
-    "z": HEAPU32[(((ptr) + (8)) >>> 2) >>> 0]
+    "x": HEAPU32[((ptr) >> 2)],
+    "y": HEAPU32[(((ptr) + (4)) >> 2)],
+    "z": HEAPU32[(((ptr) + (8)) >> 2)]
   }),
   makeTexelCopyTextureInfo: ptr => ({
-    "texture": WebGPU.getJsObject(HEAPU32[((ptr) >>> 2) >>> 0]),
-    "mipLevel": HEAPU32[(((ptr) + (4)) >>> 2) >>> 0],
+    "texture": WebGPU.getJsObject(HEAPU32[((ptr) >> 2)]),
+    "mipLevel": HEAPU32[(((ptr) + (4)) >> 2)],
     "origin": WebGPU.makeOrigin3D(ptr + 8),
-    "aspect": WebGPU.TextureAspect[HEAP32[(((ptr) + (20)) >>> 2) >>> 0]]
+    "aspect": WebGPU.TextureAspect[HEAP32[(((ptr) + (20)) >> 2)]]
   }),
   makeTexelCopyBufferLayout: ptr => {
-    var bytesPerRow = HEAPU32[(((ptr) + (8)) >>> 2) >>> 0];
-    var rowsPerImage = HEAPU32[(((ptr) + (12)) >>> 2) >>> 0];
+    var bytesPerRow = HEAPU32[(((ptr) + (8)) >> 2)];
+    var rowsPerImage = HEAPU32[(((ptr) + (12)) >> 2)];
     return {
       "offset": readI53FromI64(ptr),
       "bytesPerRow": bytesPerRow === 4294967295 ? undefined : bytesPerRow,
@@ -6134,15 +4964,15 @@ var WebGPU = {
   makeTexelCopyBufferInfo: ptr => {
     var layoutPtr = ptr + 0;
     var bufferCopyView = WebGPU.makeTexelCopyBufferLayout(layoutPtr);
-    bufferCopyView["buffer"] = WebGPU.getJsObject(HEAPU32[(((ptr) + (16)) >>> 2) >>> 0]);
+    bufferCopyView["buffer"] = WebGPU.getJsObject(HEAPU32[(((ptr) + (16)) >> 2)]);
     return bufferCopyView;
   },
   makePassTimestampWrites: ptr => {
     if (ptr === 0) return undefined;
     return {
-      "querySet": WebGPU.getJsObject(HEAPU32[(((ptr) + (4)) >>> 2) >>> 0]),
-      "beginningOfPassWriteIndex": HEAPU32[(((ptr) + (8)) >>> 2) >>> 0],
-      "endOfPassWriteIndex": HEAPU32[(((ptr) + (12)) >>> 2) >>> 0]
+      "querySet": WebGPU.getJsObject(HEAPU32[(((ptr) + (4)) >> 2)]),
+      "beginningOfPassWriteIndex": HEAPU32[(((ptr) + (8)) >> 2)],
+      "endOfPassWriteIndex": HEAPU32[(((ptr) + (12)) >> 2)]
     };
   },
   makePipelineConstants: (constantCount, constantsPtr) => {
@@ -6151,7 +4981,7 @@ var WebGPU = {
     for (var i = 0; i < constantCount; ++i) {
       var entryPtr = constantsPtr + 24 * i;
       var key = WebGPU.makeStringFromStringView(entryPtr + 4);
-      constants[key] = HEAPF64[(((entryPtr) + (16)) >>> 3) >>> 0];
+      constants[key] = HEAPF64[(((entryPtr) + (16)) >> 3)];
     }
     return constants;
   },
@@ -6162,8 +4992,8 @@ var WebGPU = {
   makeComputeState: ptr => {
     if (!ptr) return undefined;
     var desc = {
-      "module": WebGPU.getJsObject(HEAPU32[(((ptr) + (4)) >>> 2) >>> 0]),
-      "constants": WebGPU.makePipelineConstants(HEAPU32[(((ptr) + (16)) >>> 2) >>> 0], HEAPU32[(((ptr) + (20)) >>> 2) >>> 0]),
+      "module": WebGPU.getJsObject(HEAPU32[(((ptr) + (4)) >> 2)]),
+      "constants": WebGPU.makePipelineConstants(HEAPU32[(((ptr) + (16)) >> 2)], HEAPU32[(((ptr) + (20)) >> 2)]),
       "entryPoint": WebGPU.makeStringFromOptionalStringView(ptr + 8)
     };
     return desc;
@@ -6171,7 +5001,7 @@ var WebGPU = {
   makeComputePipelineDesc: descriptor => {
     var desc = {
       "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-      "layout": WebGPU.makePipelineLayout(HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0]),
+      "layout": WebGPU.makePipelineLayout(HEAPU32[(((descriptor) + (12)) >> 2)]),
       "compute": WebGPU.makeComputeState(descriptor + 16)
     };
     return desc;
@@ -6180,19 +5010,19 @@ var WebGPU = {
     function makePrimitiveState(psPtr) {
       if (!psPtr) return undefined;
       return {
-        "topology": WebGPU.PrimitiveTopology[HEAP32[(((psPtr) + (4)) >>> 2) >>> 0]],
-        "stripIndexFormat": WebGPU.IndexFormat[HEAP32[(((psPtr) + (8)) >>> 2) >>> 0]],
-        "frontFace": WebGPU.FrontFace[HEAP32[(((psPtr) + (12)) >>> 2) >>> 0]],
-        "cullMode": WebGPU.CullMode[HEAP32[(((psPtr) + (16)) >>> 2) >>> 0]],
-        "unclippedDepth": !!(HEAPU32[(((psPtr) + (20)) >>> 2) >>> 0])
+        "topology": WebGPU.PrimitiveTopology[HEAP32[(((psPtr) + (4)) >> 2)]],
+        "stripIndexFormat": WebGPU.IndexFormat[HEAP32[(((psPtr) + (8)) >> 2)]],
+        "frontFace": WebGPU.FrontFace[HEAP32[(((psPtr) + (12)) >> 2)]],
+        "cullMode": WebGPU.CullMode[HEAP32[(((psPtr) + (16)) >> 2)]],
+        "unclippedDepth": !!(HEAPU32[(((psPtr) + (20)) >> 2)])
       };
     }
     function makeBlendComponent(bdPtr) {
       if (!bdPtr) return undefined;
       return {
-        "operation": WebGPU.BlendOperation[HEAP32[((bdPtr) >>> 2) >>> 0]],
-        "srcFactor": WebGPU.BlendFactor[HEAP32[(((bdPtr) + (4)) >>> 2) >>> 0]],
-        "dstFactor": WebGPU.BlendFactor[HEAP32[(((bdPtr) + (8)) >>> 2) >>> 0]]
+        "operation": WebGPU.BlendOperation[HEAP32[((bdPtr) >> 2)]],
+        "srcFactor": WebGPU.BlendFactor[HEAP32[(((bdPtr) + (4)) >> 2)]],
+        "dstFactor": WebGPU.BlendFactor[HEAP32[(((bdPtr) + (8)) >> 2)]]
       };
     }
     function makeBlendState(bsPtr) {
@@ -6203,11 +5033,11 @@ var WebGPU = {
       };
     }
     function makeColorState(csPtr) {
-      var format = WebGPU.TextureFormat[HEAP32[(((csPtr) + (4)) >>> 2) >>> 0]];
+      var format = WebGPU.TextureFormat[HEAP32[(((csPtr) + (4)) >> 2)]];
       return format ? {
         "format": format,
-        "blend": makeBlendState(HEAPU32[(((csPtr) + (8)) >>> 2) >>> 0]),
-        "writeMask": HEAPU32[(((csPtr) + (16)) >>> 2) >>> 0]
+        "blend": makeBlendState(HEAPU32[(((csPtr) + (8)) >> 2)]),
+        "writeMask": HEAPU32[(((csPtr) + (16)) >> 2)]
       } : undefined;
     }
     function makeColorStates(count, csArrayPtr) {
@@ -6219,32 +5049,32 @@ var WebGPU = {
     }
     function makeStencilStateFace(ssfPtr) {
       return {
-        "compare": WebGPU.CompareFunction[HEAP32[((ssfPtr) >>> 2) >>> 0]],
-        "failOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (4)) >>> 2) >>> 0]],
-        "depthFailOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (8)) >>> 2) >>> 0]],
-        "passOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (12)) >>> 2) >>> 0]]
+        "compare": WebGPU.CompareFunction[HEAP32[((ssfPtr) >> 2)]],
+        "failOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (4)) >> 2)]],
+        "depthFailOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (8)) >> 2)]],
+        "passOp": WebGPU.StencilOperation[HEAP32[(((ssfPtr) + (12)) >> 2)]]
       };
     }
     function makeDepthStencilState(dssPtr) {
       if (!dssPtr) return undefined;
       return {
-        "format": WebGPU.TextureFormat[HEAP32[(((dssPtr) + (4)) >>> 2) >>> 0]],
-        "depthWriteEnabled": !!(HEAPU32[(((dssPtr) + (8)) >>> 2) >>> 0]),
-        "depthCompare": WebGPU.CompareFunction[HEAP32[(((dssPtr) + (12)) >>> 2) >>> 0]],
+        "format": WebGPU.TextureFormat[HEAP32[(((dssPtr) + (4)) >> 2)]],
+        "depthWriteEnabled": !!(HEAPU32[(((dssPtr) + (8)) >> 2)]),
+        "depthCompare": WebGPU.CompareFunction[HEAP32[(((dssPtr) + (12)) >> 2)]],
         "stencilFront": makeStencilStateFace(dssPtr + 16),
         "stencilBack": makeStencilStateFace(dssPtr + 32),
-        "stencilReadMask": HEAPU32[(((dssPtr) + (48)) >>> 2) >>> 0],
-        "stencilWriteMask": HEAPU32[(((dssPtr) + (52)) >>> 2) >>> 0],
-        "depthBias": HEAP32[(((dssPtr) + (56)) >>> 2) >>> 0],
-        "depthBiasSlopeScale": HEAPF32[(((dssPtr) + (60)) >>> 2) >>> 0],
-        "depthBiasClamp": HEAPF32[(((dssPtr) + (64)) >>> 2) >>> 0]
+        "stencilReadMask": HEAPU32[(((dssPtr) + (48)) >> 2)],
+        "stencilWriteMask": HEAPU32[(((dssPtr) + (52)) >> 2)],
+        "depthBias": HEAP32[(((dssPtr) + (56)) >> 2)],
+        "depthBiasSlopeScale": HEAPF32[(((dssPtr) + (60)) >> 2)],
+        "depthBiasClamp": HEAPF32[(((dssPtr) + (64)) >> 2)]
       };
     }
     function makeVertexAttribute(vaPtr) {
       return {
-        "format": WebGPU.VertexFormat[HEAP32[(((vaPtr) + (4)) >>> 2) >>> 0]],
+        "format": WebGPU.VertexFormat[HEAP32[(((vaPtr) + (4)) >> 2)]],
         "offset": readI53FromI64((vaPtr) + (8)),
-        "shaderLocation": HEAPU32[(((vaPtr) + (16)) >>> 2) >>> 0]
+        "shaderLocation": HEAPU32[(((vaPtr) + (16)) >> 2)]
       };
     }
     function makeVertexAttributes(count, vaArrayPtr) {
@@ -6256,15 +5086,15 @@ var WebGPU = {
     }
     function makeVertexBuffer(vbPtr) {
       if (!vbPtr) return undefined;
-      var stepMode = WebGPU.VertexStepMode[HEAP32[(((vbPtr) + (4)) >>> 2) >>> 0]];
-      var attributeCount = HEAPU32[(((vbPtr) + (16)) >>> 2) >>> 0];
+      var stepMode = WebGPU.VertexStepMode[HEAP32[(((vbPtr) + (4)) >> 2)]];
+      var attributeCount = HEAPU32[(((vbPtr) + (16)) >> 2)];
       if (!stepMode && !attributeCount) {
         return null;
       }
       return {
         "arrayStride": readI53FromI64((vbPtr) + (8)),
         "stepMode": stepMode,
-        "attributes": makeVertexAttributes(attributeCount, HEAPU32[(((vbPtr) + (20)) >>> 2) >>> 0])
+        "attributes": makeVertexAttributes(attributeCount, HEAPU32[(((vbPtr) + (20)) >> 2)])
       };
     }
     function makeVertexBuffers(count, vbArrayPtr) {
@@ -6278,9 +5108,9 @@ var WebGPU = {
     function makeVertexState(viPtr) {
       if (!viPtr) return undefined;
       var desc = {
-        "module": WebGPU.getJsObject(HEAPU32[(((viPtr) + (4)) >>> 2) >>> 0]),
-        "constants": WebGPU.makePipelineConstants(HEAPU32[(((viPtr) + (16)) >>> 2) >>> 0], HEAPU32[(((viPtr) + (20)) >>> 2) >>> 0]),
-        "buffers": makeVertexBuffers(HEAPU32[(((viPtr) + (24)) >>> 2) >>> 0], HEAPU32[(((viPtr) + (28)) >>> 2) >>> 0]),
+        "module": WebGPU.getJsObject(HEAPU32[(((viPtr) + (4)) >> 2)]),
+        "constants": WebGPU.makePipelineConstants(HEAPU32[(((viPtr) + (16)) >> 2)], HEAPU32[(((viPtr) + (20)) >> 2)]),
+        "buffers": makeVertexBuffers(HEAPU32[(((viPtr) + (24)) >> 2)], HEAPU32[(((viPtr) + (28)) >> 2)]),
         "entryPoint": WebGPU.makeStringFromOptionalStringView(viPtr + 8)
       };
       return desc;
@@ -6288,37 +5118,37 @@ var WebGPU = {
     function makeMultisampleState(msPtr) {
       if (!msPtr) return undefined;
       return {
-        "count": HEAPU32[(((msPtr) + (4)) >>> 2) >>> 0],
-        "mask": HEAPU32[(((msPtr) + (8)) >>> 2) >>> 0],
-        "alphaToCoverageEnabled": !!(HEAPU32[(((msPtr) + (12)) >>> 2) >>> 0])
+        "count": HEAPU32[(((msPtr) + (4)) >> 2)],
+        "mask": HEAPU32[(((msPtr) + (8)) >> 2)],
+        "alphaToCoverageEnabled": !!(HEAPU32[(((msPtr) + (12)) >> 2)])
       };
     }
     function makeFragmentState(fsPtr) {
       if (!fsPtr) return undefined;
       var desc = {
-        "module": WebGPU.getJsObject(HEAPU32[(((fsPtr) + (4)) >>> 2) >>> 0]),
-        "constants": WebGPU.makePipelineConstants(HEAPU32[(((fsPtr) + (16)) >>> 2) >>> 0], HEAPU32[(((fsPtr) + (20)) >>> 2) >>> 0]),
-        "targets": makeColorStates(HEAPU32[(((fsPtr) + (24)) >>> 2) >>> 0], HEAPU32[(((fsPtr) + (28)) >>> 2) >>> 0]),
+        "module": WebGPU.getJsObject(HEAPU32[(((fsPtr) + (4)) >> 2)]),
+        "constants": WebGPU.makePipelineConstants(HEAPU32[(((fsPtr) + (16)) >> 2)], HEAPU32[(((fsPtr) + (20)) >> 2)]),
+        "targets": makeColorStates(HEAPU32[(((fsPtr) + (24)) >> 2)], HEAPU32[(((fsPtr) + (28)) >> 2)]),
         "entryPoint": WebGPU.makeStringFromOptionalStringView(fsPtr + 8)
       };
       return desc;
     }
     var desc = {
       "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-      "layout": WebGPU.makePipelineLayout(HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0]),
+      "layout": WebGPU.makePipelineLayout(HEAPU32[(((descriptor) + (12)) >> 2)]),
       "vertex": makeVertexState(descriptor + 16),
       "primitive": makePrimitiveState(descriptor + 48),
-      "depthStencil": makeDepthStencilState(HEAPU32[(((descriptor) + (72)) >>> 2) >>> 0]),
+      "depthStencil": makeDepthStencilState(HEAPU32[(((descriptor) + (72)) >> 2)]),
       "multisample": makeMultisampleState(descriptor + 76),
-      "fragment": makeFragmentState(HEAPU32[(((descriptor) + (92)) >>> 2) >>> 0])
+      "fragment": makeFragmentState(HEAPU32[(((descriptor) + (92)) >> 2)])
     };
     return desc;
   },
   fillLimitStruct: (limits, limitsOutPtr) => {
-    var nextInChainPtr = HEAPU32[((limitsOutPtr) >>> 2) >>> 0];
+    var nextInChainPtr = HEAPU32[((limitsOutPtr) >> 2)];
     function setLimitValueU32(name, basePtr, limitOffset, fallbackValue = 0) {
       var limitValue = limits[name] ?? fallbackValue;
-      HEAPU32[(((basePtr) + (limitOffset)) >>> 2) >>> 0] = limitValue;
+      HEAPU32[(((basePtr) + (limitOffset)) >> 2)] = limitValue;
     }
     function setLimitValueU64(name, basePtr, limitOffset, fallbackValue = 0) {
       var limitValue = limits[name] ?? fallbackValue;
@@ -6359,7 +5189,7 @@ var WebGPU = {
     // Note this limit is new and won't be present in all browsers for a while. Fall back to 0.
     setLimitValueU32("maxImmediateSize", limitsOutPtr, 148);
     if (nextInChainPtr !== 0) {
-      var sType = HEAP32[(((nextInChainPtr) + (4)) >>> 2) >>> 0];
+      var sType = HEAP32[(((nextInChainPtr) + (4)) >> 2)];
       var compatibilityModeLimitsPtr = nextInChainPtr;
       // Note these limits are new and won't be present in all browsers for a while. Fall back to exposing the PerShaderStage limit.
       setLimitValueU32("maxStorageBuffersInVertexStage", compatibilityModeLimitsPtr, 8, limits.maxStorageBuffersPerShaderStage);
@@ -6370,8 +5200,8 @@ var WebGPU = {
   },
   fillAdapterInfoStruct: (info, infoStruct) => {
     // Populate subgroup limits.
-    HEAPU32[(((infoStruct) + (52)) >>> 2) >>> 0] = info.subgroupMinSize;
-    HEAPU32[(((infoStruct) + (56)) >>> 2) >>> 0] = info.subgroupMaxSize;
+    HEAPU32[(((infoStruct) + (52)) >> 2)] = info.subgroupMinSize;
+    HEAPU32[(((infoStruct) + (56)) >> 2)] = info.subgroupMaxSize;
     // Append all the strings together to condense into a single malloc.
     var strs = info.vendor + info.architecture + info.device + info.description;
     var strPtr = stringToNewUTF8(strs);
@@ -6387,11 +5217,11 @@ var WebGPU = {
     var descriptionLen = lengthBytesUTF8(info.description);
     WebGPU.setStringView(infoStruct + 28, strPtr, descriptionLen);
     strPtr += descriptionLen;
-    HEAP32[(((infoStruct) + (36)) >>> 2) >>> 0] = 2;
+    HEAP32[(((infoStruct) + (36)) >> 2)] = 2;
     var adapterType = info.isFallbackAdapter ? 3 : 4;
-    HEAP32[(((infoStruct) + (40)) >>> 2) >>> 0] = adapterType;
-    HEAPU32[(((infoStruct) + (44)) >>> 2) >>> 0] = 0;
-    HEAPU32[(((infoStruct) + (48)) >>> 2) >>> 0] = 0;
+    HEAP32[(((infoStruct) + (40)) >> 2)] = adapterType;
+    HEAPU32[(((infoStruct) + (44)) >> 2)] = 0;
+    HEAPU32[(((infoStruct) + (48)) >> 2)] = 0;
     WebGPU.iterateExtensions(infoStruct, {
       327739: ext => {
         let configCount = 0;
@@ -6403,15 +5233,15 @@ var WebGPU = {
             const ptr = configsPtr + i * 28;
             const componentType = WebGPU.SubgroupMatrixComponentType.indexOf(cfg.componentType);
             const resultComponentType = WebGPU.SubgroupMatrixComponentType.indexOf(cfg.resultComponentType);
-            HEAP32[((ptr) >>> 2) >>> 0] = componentType;
-            HEAP32[(((ptr) + (4)) >>> 2) >>> 0] = resultComponentType;
-            HEAPU32[(((ptr) + (8)) >>> 2) >>> 0] = cfg.M;
-            HEAPU32[(((ptr) + (12)) >>> 2) >>> 0] = cfg.N;
-            HEAPU32[(((ptr) + (16)) >>> 2) >>> 0] = cfg.K;
+            HEAP32[((ptr) >> 2)] = componentType;
+            HEAP32[(((ptr) + (4)) >> 2)] = resultComponentType;
+            HEAPU32[(((ptr) + (8)) >> 2)] = cfg.M;
+            HEAPU32[(((ptr) + (12)) >> 2)] = cfg.N;
+            HEAPU32[(((ptr) + (16)) >> 2)] = cfg.K;
           }
         }
-        HEAPU32[(((ext) + (12)) >>> 2) >>> 0] = configsPtr;
-        HEAPU32[(((ext) + (8)) >>> 2) >>> 0] = configCount;
+        HEAPU32[(((ext) + (12)) >> 2)] = configsPtr;
+        HEAPU32[(((ext) + (8)) >> 2)] = configCount;
       }
     });
   },
@@ -6486,19 +5316,7 @@ var WebGPU = {
   WGSLLanguageFeatureName: [ , "readonly_and_readwrite_storage_textures", "packed_4x8_integer_dot_product", "unrestricted_pointer_parameters", "pointer_composite_access", "uniform_buffer_standard_layout", "subgroup_id", "texture_and_sampler_let", "subgroup_uniformity", "texture_formats_tier1", "linear_indexing", "immediate_address_space", "buffer_view", "swizzle_assignment", "fragment_depth" ]
 };
 
-function _emscripten_webgpu_get_device() {
-  if (WebGPU.preinitializedDeviceId === undefined) {
-    WebGPU.preinitializedDeviceId = WebGPU.importJsDevice(Module["preinitializedWebGPUDevice"]);
-    // Some users depend on this keeping the device alive, so we add an
-    // additional reference when we first initialize it.
-    _wgpuDeviceAddRef(WebGPU.preinitializedDeviceId);
-  }
-  _wgpuDeviceAddRef(WebGPU.preinitializedDeviceId);
-  return WebGPU.preinitializedDeviceId;
-}
-
-function _emwgpuBufferDestroy(bufferPtr) {
-  bufferPtr >>>= 0;
+var _emwgpuBufferDestroy = bufferPtr => {
   var buffer = WebGPU.getJsObject(bufferPtr);
   var onUnmap = WebGPU.Internals.bufferOnUnmaps[bufferPtr];
   if (onUnmap) {
@@ -6508,118 +5326,17 @@ function _emwgpuBufferDestroy(bufferPtr) {
     delete WebGPU.Internals.bufferOnUnmaps[bufferPtr];
   }
   buffer.destroy();
-}
-
-function _emwgpuBufferGetConstMappedRange(bufferPtr, offset, size) {
-  bufferPtr >>>= 0;
-  offset >>>= 0;
-  size >>>= 0;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  if (size == 4294967295) size = undefined;
-  var mapped;
-  try {
-    mapped = buffer.getMappedRange(offset, size);
-  } catch (ex) {
-    return 0;
-  }
-  var data = _memalign(16, mapped.byteLength);
-  HEAPU8.set(new Uint8Array(mapped), data >>> 0);
-  WebGPU.Internals.bufferOnUnmaps[bufferPtr].push(() => _free(data));
-  return data;
-}
-
-function _emwgpuBufferGetMappedRange(bufferPtr, offset, size) {
-  bufferPtr >>>= 0;
-  offset >>>= 0;
-  size >>>= 0;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  if (size == 4294967295) size = undefined;
-  var mapped;
-  try {
-    mapped = buffer.getMappedRange(offset, size);
-  } catch (ex) {
-    return 0;
-  }
-  var data = _memalign(16, mapped.byteLength);
-  HEAPU8.fill(0, data, mapped.byteLength);
-  WebGPU.Internals.bufferOnUnmaps[bufferPtr].push(() => {
-    new Uint8Array(mapped).set(HEAPU8.subarray(data >>> 0, data + mapped.byteLength >>> 0));
-    _free(data);
-  });
-  return data;
-}
-
-var _emwgpuBufferMapAsync = function(bufferPtr, futureId, mode, offset, size) {
-  bufferPtr >>>= 0;
-  futureId = bigintToI53Checked(futureId);
-  mode = bigintToI53Checked(mode);
-  offset >>>= 0;
-  size >>>= 0;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  WebGPU.Internals.bufferOnUnmaps[bufferPtr] = [];
-  if (size == 4294967295) size = undefined;
-  // mapAsync
-  WebGPU.Internals.futureInsert(futureId, buffer.mapAsync(mode, offset, size).then(() => {
-    // mapAsync fulfilled
-    callUserCallback(() => {
-      _emwgpuOnMapAsyncCompleted(futureId, 1, 0);
-    });
-  }, ex => {
-    // mapAsync rejected
-    callUserCallback(() => {
-      var sp = stackSave();
-      var messagePtr = stringToUTF8OnStack(ex.message);
-      var status = ex.name === "AbortError" ? 4 : ex.name === "OperationError" ? 3 : 0;
-      _emwgpuOnMapAsyncCompleted(futureId, status, messagePtr);
-      delete WebGPU.Internals.bufferOnUnmaps[bufferPtr];
-    });
-  }));
 };
 
-function _emwgpuBufferUnmap(bufferPtr) {
-  bufferPtr >>>= 0;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  var onUnmap = WebGPU.Internals.bufferOnUnmaps[bufferPtr];
-  if (!onUnmap) {
-    // Already unmapped
-    return;
-  }
-  for (var i = 0; i < onUnmap.length; ++i) {
-    onUnmap[i]();
-  }
-  delete WebGPU.Internals.bufferOnUnmaps[bufferPtr];
-  buffer.unmap();
-}
-
-function _emwgpuBufferWriteMappedRange(bufferPtr, offset, data, size) {
-  bufferPtr >>>= 0;
-  offset >>>= 0;
-  data >>>= 0;
-  size >>>= 0;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  var mapped;
-  try {
-    mapped = buffer.getMappedRange(offset, size);
-  } catch (ex) {
-    return 2;
-  }
-  new Uint8Array(mapped).set(HEAPU8.subarray(data >>> 0, data + size >>> 0));
-  return 1;
-}
-
-function _emwgpuDelete(ptr) {
-  ptr >>>= 0;
+var _emwgpuDelete = ptr => {
   delete WebGPU.Internals.jsObjects[ptr];
-}
+};
 
-function _emwgpuDeviceCreateBuffer(devicePtr, descriptor, bufferPtr) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  bufferPtr >>>= 0;
-  var mappedAtCreation = !!(HEAPU32[(((descriptor) + (32)) >>> 2) >>> 0]);
+var _emwgpuDeviceCreateBuffer = (devicePtr, descriptor, bufferPtr) => {
+  var mappedAtCreation = !!(HEAPU32[(((descriptor) + (32)) >> 2)]);
   var desc = {
     "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "usage": HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0],
+    "usage": HEAPU32[(((descriptor) + (16)) >> 2)],
     "size": readI53FromI64((descriptor) + (24)),
     "mappedAtCreation": mappedAtCreation
   };
@@ -6636,54 +5353,7 @@ function _emwgpuDeviceCreateBuffer(devicePtr, descriptor, bufferPtr) {
     WebGPU.Internals.bufferOnUnmaps[bufferPtr] = [];
   }
   return true;
-}
-
-var _emwgpuDeviceCreateComputePipelineAsync = function(devicePtr, futureId, descriptor, pipelinePtr) {
-  devicePtr >>>= 0;
-  futureId = bigintToI53Checked(futureId);
-  descriptor >>>= 0;
-  pipelinePtr >>>= 0;
-  var desc = WebGPU.makeComputePipelineDesc(descriptor);
-  var device = WebGPU.getJsObject(devicePtr);
-  // createComputePipelineAsync
-  WebGPU.Internals.futureInsert(futureId, device.createComputePipelineAsync(desc).then(pipeline => {
-    // createComputePipelineAsync fulfilled
-    callUserCallback(() => {
-      WebGPU.Internals.jsObjectInsert(pipelinePtr, pipeline);
-      _emwgpuOnCreateComputePipelineCompleted(futureId, 1, pipelinePtr, 0);
-    });
-  }, pipelineError => {
-    // createComputePipelineAsync rejected
-    callUserCallback(() => {
-      var sp = stackSave();
-      var messagePtr = stringToUTF8OnStack(pipelineError.message);
-      var status = pipelineError.reason === "validation" ? 3 : pipelineError.reason === "internal" ? 4 : 0;
-      _emwgpuOnCreateComputePipelineCompleted(futureId, status, pipelinePtr, messagePtr);
-      stackRestore(sp);
-    });
-  }));
 };
-
-function _emwgpuDeviceCreateShaderModule(devicePtr, descriptor, shaderModulePtr) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  shaderModulePtr >>>= 0;
-  var nextInChainPtr = HEAPU32[((descriptor) >>> 2) >>> 0];
-  var sType = HEAP32[(((nextInChainPtr) + (4)) >>> 2) >>> 0];
-  var desc = {
-    "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "code": ""
-  };
-  switch (sType) {
-   case 2:
-    {
-      desc["code"] = WebGPU.makeStringFromStringView(nextInChainPtr + 8);
-      break;
-    }
-  }
-  var device = WebGPU.getJsObject(devicePtr);
-  WebGPU.Internals.jsObjectInsert(shaderModulePtr, device.createShaderModule(desc));
-}
 
 var _emwgpuDeviceDestroy = devicePtr => {
   const device = WebGPU.getJsObject(devicePtr);
@@ -6691,48 +5361,6 @@ var _emwgpuDeviceDestroy = devicePtr => {
   device.onuncapturederror = null;
   device.destroy();
 };
-
-var _emwgpuQueueOnSubmittedWorkDone = function(queuePtr, futureId) {
-  queuePtr >>>= 0;
-  futureId = bigintToI53Checked(futureId);
-  var queue = WebGPU.getJsObject(queuePtr);
-  // onSubmittedWorkDone
-  WebGPU.Internals.futureInsert(futureId, queue.onSubmittedWorkDone().then(() => {
-    // onSubmittedWorkDone fulfilled (assumed not to reject)
-    callUserCallback(() => {
-      _emwgpuOnWorkDoneCompleted(futureId, 1);
-    });
-  }));
-};
-
-var _emwgpuWaitAny = function(futurePtr, futureCount, timeoutMSPtr) {
-  futurePtr >>>= 0;
-  futureCount >>>= 0;
-  timeoutMSPtr >>>= 0;
-  return Asyncify.handleAsync(async () => {
-    var promises = [];
-    if (timeoutMSPtr) {
-      var timeoutMS = HEAP32[((timeoutMSPtr) >>> 2) >>> 0];
-      promises.length = futureCount + 1;
-      promises[futureCount] = new Promise(resolve => setTimeout(resolve, timeoutMS, 0));
-    } else {
-      promises.length = futureCount;
-    }
-    for (var i = 0; i < futureCount; ++i) {
-      // If any FutureID is not tracked, it means it must be done.
-      var futureId = readI53FromI64((futurePtr + i * 8));
-      if (!(futureId in WebGPU.Internals.futures)) {
-        return futureId;
-      }
-      promises[i] = WebGPU.Internals.futures[futureId];
-    }
-    const firstResolvedFuture = await Promise.race(promises);
-    delete WebGPU.Internals.futures[firstResolvedFuture];
-    return firstResolvedFuture;
-  });
-};
-
-_emwgpuWaitAny.isAsync = true;
 
 var ENV = {};
 
@@ -6767,32 +5395,28 @@ var getEnvStrings = () => {
   return getEnvStrings.strings;
 };
 
-function _environ_get(__environ, environ_buf) {
-  __environ >>>= 0;
-  environ_buf >>>= 0;
+var _environ_get = (__environ, environ_buf) => {
   var bufSize = 0;
   var envp = 0;
   for (var string of getEnvStrings()) {
     var ptr = environ_buf + bufSize;
-    HEAPU32[(((__environ) + (envp)) >>> 2) >>> 0] = ptr;
+    HEAPU32[(((__environ) + (envp)) >> 2)] = ptr;
     bufSize += stringToUTF8(string, ptr, Infinity) + 1;
     envp += 4;
   }
   return 0;
-}
+};
 
-function _environ_sizes_get(penviron_count, penviron_buf_size) {
-  penviron_count >>>= 0;
-  penviron_buf_size >>>= 0;
+var _environ_sizes_get = (penviron_count, penviron_buf_size) => {
   var strings = getEnvStrings();
-  HEAPU32[((penviron_count) >>> 2) >>> 0] = strings.length;
+  HEAPU32[((penviron_count) >> 2)] = strings.length;
   var bufSize = 0;
   for (var string of strings) {
     bufSize += lengthBytesUTF8(string) + 1;
   }
-  HEAPU32[((penviron_buf_size) >>> 2) >>> 0] = bufSize;
+  HEAPU32[((penviron_buf_size) >> 2)] = bufSize;
   return 0;
-}
+};
 
 function _fd_close(fd) {
   try {
@@ -6808,8 +5432,8 @@ function _fd_close(fd) {
 /** @param {number=} offset */ var doReadv = (stream, iov, iovcnt, offset) => {
   var ret = 0;
   for (var i = 0; i < iovcnt; i++) {
-    var ptr = HEAPU32[((iov) >>> 2) >>> 0];
-    var len = HEAPU32[(((iov) + (4)) >>> 2) >>> 0];
+    var ptr = HEAPU32[((iov) >> 2)];
+    var len = HEAPU32[(((iov) + (4)) >> 2)];
     iov += 8;
     try {
       var curr = FS.read(stream, HEAP8, ptr, len, offset);
@@ -6833,31 +5457,11 @@ function _fd_close(fd) {
   return ret;
 };
 
-function _fd_pread(fd, iov, iovcnt, offset, pnum) {
-  iov >>>= 0;
-  iovcnt >>>= 0;
-  offset = bigintToI53Checked(offset);
-  pnum >>>= 0;
-  try {
-    if (isNaN(offset)) return 22;
-    var stream = SYSCALLS.getStreamFromFD(fd);
-    var num = doReadv(stream, iov, iovcnt, offset);
-    HEAPU32[((pnum) >>> 2) >>> 0] = num;
-    return 0;
-  } catch (e) {
-    if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
-    return e.errno;
-  }
-}
-
 function _fd_read(fd, iov, iovcnt, pnum) {
-  iov >>>= 0;
-  iovcnt >>>= 0;
-  pnum >>>= 0;
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
     var num = doReadv(stream, iov, iovcnt);
-    HEAPU32[((pnum) >>> 2) >>> 0] = num;
+    HEAPU32[((pnum) >> 2)] = num;
     return 0;
   } catch (e) {
     if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
@@ -6865,14 +5469,14 @@ function _fd_read(fd, iov, iovcnt, pnum) {
   }
 }
 
-function _fd_seek(fd, offset, whence, newOffset) {
-  offset = bigintToI53Checked(offset);
-  newOffset >>>= 0;
+function _fd_seek(fd, offset_low, offset_high, whence, newOffset) {
+  var offset = convertI32PairToI53Checked(offset_low, offset_high);
   try {
     if (isNaN(offset)) return 22;
     var stream = SYSCALLS.getStreamFromFD(fd);
     FS.llseek(stream, offset, whence);
-    HEAP64[((newOffset) >>> 3) >>> 0] = BigInt(stream.position);
+    (tempI64 = [ stream.position >>> 0, (tempDouble = stream.position, (+(Math.abs(tempDouble))) >= 1 ? (tempDouble > 0 ? (+(Math.floor((tempDouble) / 4294967296))) >>> 0 : (~~((+(Math.ceil((tempDouble - +(((~~(tempDouble))) >>> 0)) / 4294967296))))) >>> 0) : 0) ], 
+    HEAP32[((newOffset) >> 2)] = tempI64[0], HEAP32[(((newOffset) + (4)) >> 2)] = tempI64[1]);
     if (stream.getdents && !offset && whence === 0) stream.getdents = null;
     // reset readdir state
     return 0;
@@ -6889,31 +5493,28 @@ function _fd_seek(fd, offset, whence, newOffset) {
   // socket send into multiple segments, breaking stream byte semantics.
   if (iovcnt == 1) {
     // Single iovec: write directly from HEAP8, no gather buffer needed.
-    return FS.write(stream, HEAP8, HEAPU32[((iov) >>> 2) >>> 0], HEAPU32[(((iov) + (4)) >>> 2) >>> 0], offset);
+    return FS.write(stream, HEAP8, HEAPU32[((iov) >> 2)], HEAPU32[(((iov) + (4)) >> 2)], offset);
   }
   var total = 0;
   for (var i = 0, p = iov; i < iovcnt; i++, p += 8) {
-    total += HEAPU32[(((p) + (4)) >>> 2) >>> 0];
+    total += HEAPU32[(((p) + (4)) >> 2)];
   }
   var view = new Uint8Array(total);
   var voff = 0;
   for (var i = 0; i < iovcnt; i++, iov += 8) {
-    var ptr = HEAPU32[((iov) >>> 2) >>> 0];
-    var len = HEAPU32[(((iov) + (4)) >>> 2) >>> 0];
-    view.set(HEAPU8.subarray(ptr >>> 0, ptr + len >>> 0), voff);
+    var ptr = HEAPU32[((iov) >> 2)];
+    var len = HEAPU32[(((iov) + (4)) >> 2)];
+    view.set(HEAPU8.subarray(ptr, ptr + len), voff);
     voff += len;
   }
   return FS.write(stream, view, 0, total, offset);
 };
 
 function _fd_write(fd, iov, iovcnt, pnum) {
-  iov >>>= 0;
-  iovcnt >>>= 0;
-  pnum >>>= 0;
   try {
     var stream = SYSCALLS.getStreamFromFD(fd);
     var num = doWritev(stream, iov, iovcnt);
-    HEAPU32[((pnum) >>> 2) >>> 0] = num;
+    HEAPU32[((pnum) >> 2)] = num;
     return 0;
   } catch (e) {
     if (typeof FS == "undefined" || !(e.name === "ErrnoError")) throw e;
@@ -6931,10 +5532,9 @@ var _emscripten_glAttachShader = (program, shader) => {
 
 var _glAttachShader = _emscripten_glAttachShader;
 
-function _emscripten_glBindAttribLocation(program, index, name) {
-  name >>>= 0;
+var _emscripten_glBindAttribLocation = (program, index, name) => {
   GLctx.bindAttribLocation(GL.programs[program], index, UTF8ToString(name));
-}
+};
 
 var _glBindAttribLocation = _emscripten_glBindAttribLocation;
 
@@ -6984,27 +5584,38 @@ var _emscripten_glBindTexture = (target, texture) => {
 
 var _glBindTexture = _emscripten_glBindTexture;
 
-function _emscripten_glBufferData(target, size, data, usage) {
-  size >>>= 0;
-  data >>>= 0;
+var _emscripten_glBufferData = (target, size, data, usage) => {
+  if (GL.currentContext.version >= 2) {
+    // If size is zero, WebGL would interpret uploading the whole input
+    // arraybuffer (starting from given offset), which would not make sense in
+    // WebAssembly, so avoid uploading if size is zero. However we must still
+    // call bufferData to establish a backing storage of zero bytes.
+    if (data && size) {
+      GLctx.bufferData(target, HEAPU8, usage, data, size);
+    } else {
+      GLctx.bufferData(target, size, usage);
+    }
+    return;
+  }
   // N.b. here first form specifies a heap subarray, second form an integer
   // size, so the ?: code here is polymorphic. It is advised to avoid
   // randomly mixing both uses in calling code, to avoid any potential JS
   // engine JIT issues.
-  GLctx.bufferData(target, data ? HEAPU8.subarray(data >>> 0, data + size >>> 0) : size, usage);
-}
+  GLctx.bufferData(target, data ? HEAPU8.subarray(data, data + size) : size, usage);
+};
 
 var _glBufferData = _emscripten_glBufferData;
 
-function _emscripten_glClientWaitSync(sync, flags, timeout) {
-  sync >>>= 0;
+var convertI32PairToI53 = (lo, hi) => (lo >>> 0) + hi * 4294967296;
+
+var _emscripten_glClientWaitSync = (sync, flags, timeout_low, timeout_high) => {
   // WebGL2 vs GLES3 differences: in GLES3, the timeout parameter is a uint64, where 0xFFFFFFFFFFFFFFFFULL means GL_TIMEOUT_IGNORED.
   // In JS, there's no 64-bit value types, so instead timeout is taken to be signed, and GL_TIMEOUT_IGNORED is given value -1.
   // Inherently the value accepted in the timeout is lossy, and can't take in arbitrary u64 bit pattern (but most likely doesn't matter)
   // See https://www.khronos.org/registry/webgl/specs/latest/2.0/#5.15
-  timeout = Number(timeout);
+  var timeout = convertI32PairToI53(timeout_low, timeout_high);
   return GLctx.clientWaitSync(GL.syncs[sync], flags, timeout);
-}
+};
 
 var _glClientWaitSync = _emscripten_glClientWaitSync;
 
@@ -7037,10 +5648,9 @@ var _emscripten_glCreateShader = shaderType => {
 
 var _glCreateShader = _emscripten_glCreateShader;
 
-function _emscripten_glDeleteFramebuffers(n, framebuffers) {
-  framebuffers >>>= 0;
+var _emscripten_glDeleteFramebuffers = (n, framebuffers) => {
   for (var i = 0; i < n; ++i) {
-    var id = HEAP32[(((framebuffers) + (i * 4)) >>> 2) >>> 0];
+    var id = HEAP32[(((framebuffers) + (i * 4)) >> 2)];
     var framebuffer = GL.framebuffers[id];
     if (!framebuffer) continue;
     // GL spec: "glDeleteFramebuffers silently ignores 0s and names that do not correspond to existing framebuffer objects".
@@ -7048,7 +5658,7 @@ function _emscripten_glDeleteFramebuffers(n, framebuffers) {
     framebuffer.name = 0;
     GL.framebuffers[id] = null;
   }
-}
+};
 
 var _glDeleteFramebuffers = _emscripten_glDeleteFramebuffers;
 
@@ -7083,8 +5693,7 @@ var _emscripten_glDeleteShader = id => {
 
 var _glDeleteShader = _emscripten_glDeleteShader;
 
-function _emscripten_glDeleteSync(id) {
-  id >>>= 0;
+var _emscripten_glDeleteSync = id => {
   if (!id) return;
   var sync = GL.syncs[id];
   if (!sync) {
@@ -7095,14 +5704,13 @@ function _emscripten_glDeleteSync(id) {
   GLctx.deleteSync(sync);
   sync.name = 0;
   GL.syncs[id] = null;
-}
+};
 
 var _glDeleteSync = _emscripten_glDeleteSync;
 
-function _emscripten_glDeleteTextures(n, textures) {
-  textures >>>= 0;
+var _emscripten_glDeleteTextures = (n, textures) => {
   for (var i = 0; i < n; i++) {
-    var id = HEAP32[(((textures) + (i * 4)) >>> 2) >>> 0];
+    var id = HEAP32[(((textures) + (i * 4)) >> 2)];
     var texture = GL.textures[id];
     // GL spec: "glDeleteTextures silently ignores 0s and names that do not
     // correspond to existing textures".
@@ -7111,7 +5719,7 @@ function _emscripten_glDeleteTextures(n, textures) {
     texture.name = 0;
     GL.textures[id] = null;
   }
-}
+};
 
 var _glDeleteTextures = _emscripten_glDeleteTextures;
 
@@ -7146,7 +5754,7 @@ var _emscripten_glEnableVertexAttribArray = index => {
 
 var _glEnableVertexAttribArray = _emscripten_glEnableVertexAttribArray;
 
-function _emscripten_glFenceSync(condition, flags) {
+var _emscripten_glFenceSync = (condition, flags) => {
   var sync = GLctx.fenceSync(condition, flags);
   if (sync) {
     var id = GL.getNewId(GL.syncs);
@@ -7155,7 +5763,7 @@ function _emscripten_glFenceSync(condition, flags) {
     return id;
   }
   return 0;
-}
+};
 
 var _glFenceSync = _emscripten_glFenceSync;
 
@@ -7169,24 +5777,21 @@ var _emscripten_glFramebufferTexture2D = (target, attachment, textarget, texture
 
 var _glFramebufferTexture2D = _emscripten_glFramebufferTexture2D;
 
-function _emscripten_glGenBuffers(n, buffers) {
-  buffers >>>= 0;
+var _emscripten_glGenBuffers = (n, buffers) => {
   GL.genObject(n, buffers, "createBuffer", GL.buffers);
-}
+};
 
 var _glGenBuffers = _emscripten_glGenBuffers;
 
-function _emscripten_glGenFramebuffers(n, ids) {
-  ids >>>= 0;
+var _emscripten_glGenFramebuffers = (n, ids) => {
   GL.genObject(n, ids, "createFramebuffer", GL.framebuffers);
-}
+};
 
 var _glGenFramebuffers = _emscripten_glGenFramebuffers;
 
-function _emscripten_glGenTextures(n, textures) {
-  textures >>>= 0;
+var _emscripten_glGenTextures = (n, textures) => {
   GL.genObject(n, textures, "createTexture", GL.textures);
-}
+};
 
 var _glGenTextures = _emscripten_glGenTextures;
 
@@ -7347,15 +5952,15 @@ var emscriptenWebGLGet = (name_, p, type) => {
         for (var i = 0; i < result.length; ++i) {
           switch (type) {
            case 0:
-            HEAP32[(((p) + (i * 4)) >>> 2) >>> 0] = result[i];
+            HEAP32[(((p) + (i * 4)) >> 2)] = result[i];
             break;
 
            case 2:
-            HEAPF32[(((p) + (i * 4)) >>> 2) >>> 0] = result[i];
+            HEAPF32[(((p) + (i * 4)) >> 2)] = result[i];
             break;
 
            case 4:
-            HEAP8[(p) + (i) >>> 0] = result[i] ? 1 : 0;
+            HEAP8[(p) + (i)] = result[i] ? 1 : 0;
             break;
           }
         }
@@ -7385,27 +5990,24 @@ var emscriptenWebGLGet = (name_, p, type) => {
     break;
 
    case 0:
-    HEAP32[((p) >>> 2) >>> 0] = ret;
+    HEAP32[((p) >> 2)] = ret;
     break;
 
    case 2:
-    HEAPF32[((p) >>> 2) >>> 0] = ret;
+    HEAPF32[((p) >> 2)] = ret;
     break;
 
    case 4:
-    HEAP8[p >>> 0] = ret ? 1 : 0;
+    HEAP8[p] = ret ? 1 : 0;
     break;
   }
 };
 
-function _emscripten_glGetIntegerv(name_, p) {
-  p >>>= 0;
-  return emscriptenWebGLGet(name_, p, 0);
-}
+var _emscripten_glGetIntegerv = (name_, p) => emscriptenWebGLGet(name_, p, 0);
 
 var _glGetIntegerv = _emscripten_glGetIntegerv;
 
-function _emscripten_glGetString(name_) {
+var _emscripten_glGetString = name_ => {
   var ret = GL.stringCache[name_];
   if (!ret) {
     switch (name_) {
@@ -7451,7 +6053,7 @@ function _emscripten_glGetString(name_) {
     GL.stringCache[name_] = ret;
   }
   return ret;
-}
+};
 
 var _glGetString = _emscripten_glGetString;
 
@@ -7496,8 +6098,7 @@ var webglPrepareUniformLocationsBeforeFirstUse = program => {
   }
 };
 
-function _emscripten_glGetUniformLocation(program, name) {
-  name >>>= 0;
+var _emscripten_glGetUniformLocation = (program, name) => {
   name = UTF8ToString(name);
   if (program = GL.programs[program]) {
     webglPrepareUniformLocationsBeforeFirstUse(program);
@@ -7540,7 +6141,7 @@ function _emscripten_glGetUniformLocation(program, name) {
     GL.recordError(1281);
   }
   return -1;
-}
+};
 
 var _glGetUniformLocation = _emscripten_glGetUniformLocation;
 
@@ -7599,6 +6200,8 @@ var colorChannelsInGlTextureFormat = format => {
   return colorChannels[format - 6402] || 1;
 };
 
+/** @type {!Uint16Array} */ var HEAPU16;
+
 var heapObjectForWebGLType = type => {
   // Micro-optimization for size: Subtract lowest GL enum number (0x1400/* GL_BYTE */) from type to compare
   // smaller values for the heap, for shorter generated code size.
@@ -7620,16 +6223,19 @@ var emscriptenWebGLGetTexPixelData = (type, format, width, height, pixels) => {
   var heap = heapObjectForWebGLType(type);
   var sizePerPixel = colorChannelsInGlTextureFormat(format) * heap.BYTES_PER_ELEMENT;
   var bytes = computeUnpackAlignedImageSize(width, height, sizePerPixel);
-  return heap.subarray(toTypedArrayIndex(pixels, heap) >>> 0, toTypedArrayIndex(pixels + bytes, heap) >>> 0);
+  return heap.subarray(toTypedArrayIndex(pixels, heap), toTypedArrayIndex(pixels + bytes, heap));
 };
 
-function _emscripten_glReadPixels(x, y, width, height, format, type, pixels) {
-  pixels >>>= 0;
+var _emscripten_glReadPixels = (x, y, width, height, format, type, pixels) => {
   if (GL.currentContext.version >= 2) {
     if (GLctx.currentPixelPackBufferBinding) {
       GLctx.readPixels(x, y, width, height, format, type, pixels);
       return;
     }
+    var heap = heapObjectForWebGLType(type);
+    var target = toTypedArrayIndex(pixels, heap);
+    GLctx.readPixels(x, y, width, height, format, type, heap, target);
+    return;
   }
   var pixelData = emscriptenWebGLGetTexPixelData(type, format, width, height, pixels);
   if (!pixelData) {
@@ -7637,30 +6243,33 @@ function _emscripten_glReadPixels(x, y, width, height, format, type, pixels) {
     return;
   }
   GLctx.readPixels(x, y, width, height, format, type, pixelData);
-}
+};
 
 var _glReadPixels = _emscripten_glReadPixels;
 
-function _emscripten_glShaderSource(shader, count, string, length) {
-  string >>>= 0;
-  length >>>= 0;
+var _emscripten_glShaderSource = (shader, count, string, length) => {
   var source = GL.getSource(shader, count, string, length);
   GLctx.shaderSource(GL.shaders[shader], source);
-}
+};
 
 var _glShaderSource = _emscripten_glShaderSource;
 
-function _emscripten_glTexImage2D(target, level, internalFormat, width, height, border, format, type, pixels) {
-  pixels >>>= 0;
+var _emscripten_glTexImage2D = (target, level, internalFormat, width, height, border, format, type, pixels) => {
   if (GL.currentContext.version >= 2) {
     if (GLctx.currentPixelUnpackBufferBinding) {
       GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, pixels);
       return;
     }
+    if (pixels) {
+      var heap = heapObjectForWebGLType(type);
+      var index = toTypedArrayIndex(pixels, heap);
+      GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, heap, index);
+      return;
+    }
   }
   var pixelData = pixels ? emscriptenWebGLGetTexPixelData(type, format, width, height, pixels) : null;
   GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, pixelData);
-}
+};
 
 var _glTexImage2D = _emscripten_glTexImage2D;
 
@@ -7671,20 +6280,6 @@ var _glTexParameteri = _emscripten_glTexParameteri;
 var _emscripten_glTexStorage2D = (x0, x1, x2, x3, x4) => GLctx.texStorage2D(x0, x1, x2, x3, x4);
 
 var _glTexStorage2D = _emscripten_glTexStorage2D;
-
-function _emscripten_glTexSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels) {
-  pixels >>>= 0;
-  if (GL.currentContext.version >= 2) {
-    if (GLctx.currentPixelUnpackBufferBinding) {
-      GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
-      return;
-    }
-  }
-  var pixelData = pixels ? emscriptenWebGLGetTexPixelData(type, format, width, height, pixels) : null;
-  GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixelData);
-}
-
-var _glTexSubImage2D = _emscripten_glTexSubImage2D;
 
 var webglGetProgramUniformLocation = (program, location) => {
   if (program) {
@@ -7721,8 +6316,7 @@ var _emscripten_glUseProgram = program => {
 
 var _glUseProgram = _emscripten_glUseProgram;
 
-function _emscripten_glVertexAttribPointer(index, size, type, normalized, stride, ptr) {
-  ptr >>>= 0;
+var _emscripten_glVertexAttribPointer = (index, size, type, normalized, stride, ptr) => {
   var cb = GL.currentContext.clientBuffers[index];
   if (!GLctx.currentArrayBufferBinding) {
     cb.size = size;
@@ -7738,7 +6332,7 @@ function _emscripten_glVertexAttribPointer(index, size, type, normalized, stride
   }
   cb.clientside = false;
   GLctx.vertexAttribPointer(index, size, type, !!normalized, stride, ptr);
-}
+};
 
 var _glVertexAttribPointer = _emscripten_glVertexAttribPointer;
 
@@ -7746,278 +6340,23 @@ var _emscripten_glViewport = (x0, x1, x2, x3) => GLctx.viewport(x0, x1, x2, x3);
 
 var _glViewport = _emscripten_glViewport;
 
-function _random_get(buffer, size) {
-  buffer >>>= 0;
-  size >>>= 0;
-  return randomFill(HEAPU8.subarray(buffer >>> 0, buffer + size >>> 0));
-}
+var _random_get = (buffer, size) => randomFill(HEAPU8.subarray(buffer, buffer + size));
 
-var _wgpuBufferGetSize = function(bufferPtr) {
-  bufferPtr >>>= 0;
-  var ret = (() => {
-    var buffer = WebGPU.getJsObject(bufferPtr);
-    // 64-bit
-    return buffer.size;
-  })();
-  return BigInt(ret);
-};
-
-var _wgpuBufferGetUsage = function(bufferPtr) {
-  bufferPtr >>>= 0;
-  var ret = (() => {
-    var buffer = WebGPU.getJsObject(bufferPtr);
-    return buffer.usage;
-  })();
-  return BigInt(ret);
-};
-
-function _wgpuCommandEncoderBeginComputePass(encoderPtr, descriptor) {
-  encoderPtr >>>= 0;
-  descriptor >>>= 0;
-  var desc;
-  if (descriptor) {
-    desc = {
-      "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-      "timestampWrites": WebGPU.makePassTimestampWrites(HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0])
-    };
-  }
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  var ptr = _emwgpuCreateComputePassEncoder(0);
-  WebGPU.Internals.jsObjectInsert(ptr, commandEncoder.beginComputePass(desc));
-  return ptr;
-}
-
-function _wgpuCommandEncoderClearBuffer(encoderPtr, bufferPtr, offset, size) {
-  encoderPtr >>>= 0;
-  bufferPtr >>>= 0;
-  offset = bigintToI53Checked(offset);
-  size = bigintToI53Checked(size);
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  if (size == -1) size = undefined;
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  commandEncoder.clearBuffer(buffer, offset, size);
-}
-
-function _wgpuCommandEncoderCopyBufferToBuffer(encoderPtr, srcPtr, srcOffset, dstPtr, dstOffset, size) {
-  encoderPtr >>>= 0;
-  srcPtr >>>= 0;
-  srcOffset = bigintToI53Checked(srcOffset);
-  dstPtr >>>= 0;
-  dstOffset = bigintToI53Checked(dstOffset);
-  size = bigintToI53Checked(size);
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  var src = WebGPU.getJsObject(srcPtr);
-  var dst = WebGPU.getJsObject(dstPtr);
-  commandEncoder.copyBufferToBuffer(src, srcOffset, dst, dstOffset, size);
-}
-
-function _wgpuCommandEncoderCopyBufferToTexture(encoderPtr, srcPtr, dstPtr, copySizePtr) {
-  encoderPtr >>>= 0;
-  srcPtr >>>= 0;
-  dstPtr >>>= 0;
-  copySizePtr >>>= 0;
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  var copySize = WebGPU.makeExtent3D(copySizePtr);
-  commandEncoder.copyBufferToTexture(WebGPU.makeTexelCopyBufferInfo(srcPtr), WebGPU.makeTexelCopyTextureInfo(dstPtr), copySize);
-}
-
-function _wgpuCommandEncoderCopyTextureToBuffer(encoderPtr, srcPtr, dstPtr, copySizePtr) {
-  encoderPtr >>>= 0;
-  srcPtr >>>= 0;
-  dstPtr >>>= 0;
-  copySizePtr >>>= 0;
+var _wgpuCommandEncoderCopyTextureToBuffer = (encoderPtr, srcPtr, dstPtr, copySizePtr) => {
   var commandEncoder = WebGPU.getJsObject(encoderPtr);
   var copySize = WebGPU.makeExtent3D(copySizePtr);
   commandEncoder.copyTextureToBuffer(WebGPU.makeTexelCopyTextureInfo(srcPtr), WebGPU.makeTexelCopyBufferInfo(dstPtr), copySize);
-}
+};
 
-function _wgpuCommandEncoderCopyTextureToTexture(encoderPtr, srcPtr, dstPtr, copySizePtr) {
-  encoderPtr >>>= 0;
-  srcPtr >>>= 0;
-  dstPtr >>>= 0;
-  copySizePtr >>>= 0;
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  var copySize = WebGPU.makeExtent3D(copySizePtr);
-  commandEncoder.copyTextureToTexture(WebGPU.makeTexelCopyTextureInfo(srcPtr), WebGPU.makeTexelCopyTextureInfo(dstPtr), copySize);
-}
-
-function _wgpuCommandEncoderFinish(encoderPtr, descriptor) {
-  encoderPtr >>>= 0;
-  descriptor >>>= 0;
+var _wgpuCommandEncoderFinish = (encoderPtr, descriptor) => {
   // TODO: Use the descriptor.
   var commandEncoder = WebGPU.getJsObject(encoderPtr);
   var ptr = _emwgpuCreateCommandBuffer(0);
   WebGPU.Internals.jsObjectInsert(ptr, commandEncoder.finish());
   return ptr;
-}
-
-function _wgpuCommandEncoderResolveQuerySet(encoderPtr, querySetPtr, firstQuery, queryCount, destinationPtr, destinationOffset) {
-  encoderPtr >>>= 0;
-  querySetPtr >>>= 0;
-  destinationPtr >>>= 0;
-  destinationOffset = bigintToI53Checked(destinationOffset);
-  var commandEncoder = WebGPU.getJsObject(encoderPtr);
-  var querySet = WebGPU.getJsObject(querySetPtr);
-  var destination = WebGPU.getJsObject(destinationPtr);
-  commandEncoder.resolveQuerySet(querySet, firstQuery, queryCount, destination, destinationOffset);
-}
-
-function _wgpuComputePassEncoderDispatchWorkgroups(passPtr, x, y, z) {
-  passPtr >>>= 0;
-  var pass = WebGPU.getJsObject(passPtr);
-  pass.dispatchWorkgroups(x, y, z);
-}
-
-function _wgpuComputePassEncoderEnd(passPtr) {
-  passPtr >>>= 0;
-  var pass = WebGPU.getJsObject(passPtr);
-  pass.end();
-}
-
-function _wgpuComputePassEncoderSetBindGroup(passPtr, groupIndex, groupPtr, dynamicOffsetCount, dynamicOffsetsPtr) {
-  passPtr >>>= 0;
-  groupPtr >>>= 0;
-  dynamicOffsetCount >>>= 0;
-  dynamicOffsetsPtr >>>= 0;
-  var pass = WebGPU.getJsObject(passPtr);
-  var group = WebGPU.getJsObject(groupPtr);
-  if (dynamicOffsetCount == 0) {
-    pass.setBindGroup(groupIndex, group);
-  } else {
-    pass.setBindGroup(groupIndex, group, HEAPU32, ((dynamicOffsetsPtr) >>> 2), dynamicOffsetCount);
-  }
-}
-
-function _wgpuComputePassEncoderSetPipeline(passPtr, pipelinePtr) {
-  passPtr >>>= 0;
-  pipelinePtr >>>= 0;
-  var pass = WebGPU.getJsObject(passPtr);
-  var pipeline = WebGPU.getJsObject(pipelinePtr);
-  pass.setPipeline(pipeline);
-}
-
-var _wgpuDeviceCreateBindGroup = function(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  function makeEntry(entryPtr) {
-    var bufferPtr = HEAPU32[(((entryPtr) + (8)) >>> 2) >>> 0];
-    var samplerPtr = HEAPU32[(((entryPtr) + (32)) >>> 2) >>> 0];
-    var textureViewPtr = HEAPU32[(((entryPtr) + (36)) >>> 2) >>> 0];
-    var externalTexturePtr = 0;
-    WebGPU.iterateExtensions(entryPtr, {
-      14: ptr => {
-        externalTexturePtr = HEAPU32[(((ptr) + (8)) >>> 2) >>> 0];
-      }
-    });
-    var resource;
-    if (bufferPtr) {
-      // Note the sentinel UINT64_MAX will be read as -1.
-      var size = readI53FromI64((entryPtr) + (24));
-      if (size == -1) size = undefined;
-      resource = {
-        "buffer": WebGPU.getJsObject(bufferPtr),
-        "offset": readI53FromI64((entryPtr) + (16)),
-        "size": size
-      };
-    } else {
-      resource = WebGPU.getJsObject(samplerPtr || textureViewPtr || externalTexturePtr);
-    }
-    return {
-      "binding": HEAPU32[(((entryPtr) + (4)) >>> 2) >>> 0],
-      "resource": resource
-    };
-  }
-  function makeEntries(count, entriesPtrs) {
-    var entries = [];
-    for (var i = 0; i < count; ++i) {
-      entries.push(makeEntry(entriesPtrs + 40 * i));
-    }
-    return entries;
-  }
-  var desc = {
-    "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "layout": WebGPU.getJsObject(HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0]),
-    "entries": makeEntries(HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0], HEAPU32[(((descriptor) + (20)) >>> 2) >>> 0])
-  };
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreateBindGroup(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createBindGroup(desc));
-  return ptr;
 };
 
-function _wgpuDeviceCreateBindGroupLayout(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  function makeBufferEntry(substructPtr) {
-    var typeInt = HEAPU32[(((substructPtr) + (4)) >>> 2) >>> 0];
-    if (!typeInt) return undefined;
-    return {
-      "type": WebGPU.BufferBindingType[typeInt],
-      "hasDynamicOffset": !!(HEAPU32[(((substructPtr) + (8)) >>> 2) >>> 0]),
-      "minBindingSize": readI53FromI64((substructPtr) + (16))
-    };
-  }
-  function makeSamplerEntry(substructPtr) {
-    var typeInt = HEAPU32[(((substructPtr) + (4)) >>> 2) >>> 0];
-    if (!typeInt) return undefined;
-    return {
-      "type": WebGPU.SamplerBindingType[typeInt]
-    };
-  }
-  function makeTextureEntry(substructPtr) {
-    var sampleTypeInt = HEAPU32[(((substructPtr) + (4)) >>> 2) >>> 0];
-    if (!sampleTypeInt) return undefined;
-    return {
-      "sampleType": WebGPU.TextureSampleType[sampleTypeInt],
-      "viewDimension": WebGPU.TextureViewDimension[HEAP32[(((substructPtr) + (8)) >>> 2) >>> 0]],
-      "multisampled": !!(HEAPU32[(((substructPtr) + (12)) >>> 2) >>> 0])
-    };
-  }
-  function makeStorageTextureEntry(substructPtr) {
-    var accessInt = HEAPU32[(((substructPtr) + (4)) >>> 2) >>> 0];
-    if (!accessInt) return undefined;
-    return {
-      "access": WebGPU.StorageTextureAccess[accessInt],
-      "format": WebGPU.TextureFormat[HEAP32[(((substructPtr) + (8)) >>> 2) >>> 0]],
-      "viewDimension": WebGPU.TextureViewDimension[HEAP32[(((substructPtr) + (12)) >>> 2) >>> 0]]
-    };
-  }
-  function makeEntry(entryPtr) {
-    var entry = {
-      "binding": HEAPU32[(((entryPtr) + (4)) >>> 2) >>> 0],
-      "visibility": HEAPU32[(((entryPtr) + (8)) >>> 2) >>> 0],
-      "buffer": makeBufferEntry(entryPtr + 24),
-      "sampler": makeSamplerEntry(entryPtr + 48),
-      "texture": makeTextureEntry(entryPtr + 56),
-      "storageTexture": makeStorageTextureEntry(entryPtr + 72)
-    };
-    WebGPU.iterateExtensions(entryPtr, {
-      13: ptr => {
-        entry["externalTexture"] = {};
-      }
-    });
-    return entry;
-  }
-  function makeEntries(count, entriesPtrs) {
-    var entries = [];
-    for (var i = 0; i < count; ++i) {
-      entries.push(makeEntry(entriesPtrs + 88 * i));
-    }
-    return entries;
-  }
-  var desc = {
-    "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "entries": makeEntries(HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0], HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0])
-  };
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreateBindGroupLayout(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createBindGroupLayout(desc));
-  return ptr;
-}
-
-function _wgpuDeviceCreateCommandEncoder(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
+var _wgpuDeviceCreateCommandEncoder = (devicePtr, descriptor) => {
   var desc;
   if (descriptor) {
     desc = {
@@ -8028,258 +6367,22 @@ function _wgpuDeviceCreateCommandEncoder(devicePtr, descriptor) {
   var ptr = _emwgpuCreateCommandEncoder(0);
   WebGPU.Internals.jsObjectInsert(ptr, device.createCommandEncoder(desc));
   return ptr;
-}
+};
 
-function _wgpuDeviceCreateComputePipeline(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  var desc = WebGPU.makeComputePipelineDesc(descriptor);
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreateComputePipeline(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createComputePipeline(desc));
-  return ptr;
-}
-
-function _wgpuDeviceCreatePipelineLayout(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  var bglCount = HEAPU32[(((descriptor) + (12)) >>> 2) >>> 0];
-  var bglPtr = HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0];
-  var bgls = [];
-  for (var i = 0; i < bglCount; ++i) {
-    bgls.push(WebGPU.getJsObject(HEAPU32[(((bglPtr) + (4 * i)) >>> 2) >>> 0]));
-  }
-  var desc = {
-    "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "bindGroupLayouts": bgls,
-    "immediateSize": HEAPU32[(((descriptor) + (20)) >>> 2) >>> 0]
-  };
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreatePipelineLayout(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createPipelineLayout(desc));
-  return ptr;
-}
-
-function _wgpuDeviceCreateQuerySet(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  var desc = {
-    "type": WebGPU.QueryType[HEAP32[(((descriptor) + (12)) >>> 2) >>> 0]],
-    "count": HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0]
-  };
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreateQuerySet(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createQuerySet(desc));
-  return ptr;
-}
-
-function _wgpuDeviceCreateTexture(devicePtr, descriptor) {
-  devicePtr >>>= 0;
-  descriptor >>>= 0;
-  var nextInChainPtr = HEAPU32[((descriptor) >>> 2) >>> 0];
-  var textureBindingViewDimension;
-  if (nextInChainPtr !== 0) {
-    var sType = HEAP32[(((nextInChainPtr) + (4)) >>> 2) >>> 0];
-    var textureBindingViewDimensionDescriptor = nextInChainPtr;
-    textureBindingViewDimension = WebGPU.TextureViewDimension[HEAP32[(((textureBindingViewDimensionDescriptor) + (8)) >>> 2) >>> 0]];
-  }
-  var desc = {
-    "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-    "size": WebGPU.makeExtent3D(descriptor + 28),
-    "mipLevelCount": HEAPU32[(((descriptor) + (44)) >>> 2) >>> 0],
-    "sampleCount": HEAPU32[(((descriptor) + (48)) >>> 2) >>> 0],
-    "dimension": WebGPU.TextureDimension[HEAP32[(((descriptor) + (24)) >>> 2) >>> 0]],
-    "format": WebGPU.TextureFormat[HEAP32[(((descriptor) + (40)) >>> 2) >>> 0]],
-    "usage": HEAPU32[(((descriptor) + (16)) >>> 2) >>> 0],
-    "textureBindingViewDimension": textureBindingViewDimension
-  };
-  var viewFormatCount = HEAPU32[(((descriptor) + (52)) >>> 2) >>> 0];
-  if (viewFormatCount) {
-    var viewFormatsPtr = HEAPU32[(((descriptor) + (56)) >>> 2) >>> 0];
-    // viewFormatsPtr pointer to an array of TextureFormat which is an enum of size uint32_t
-    desc["viewFormats"] = Array.from(HEAP32.subarray((((viewFormatsPtr) >>> 2)) >>> 0, ((viewFormatsPtr + viewFormatCount * 4) >>> 2) >>> 0), format => WebGPU.TextureFormat[format]);
-  }
-  var device = WebGPU.getJsObject(devicePtr);
-  var ptr = _emwgpuCreateTexture(0);
-  WebGPU.Internals.jsObjectInsert(ptr, device.createTexture(desc));
-  return ptr;
-}
-
-function _wgpuDeviceGetAdapterInfo(devicePtr, adapterInfo) {
-  devicePtr >>>= 0;
-  adapterInfo >>>= 0;
-  var device = WebGPU.getJsObject(devicePtr);
-  WebGPU.fillAdapterInfoStruct(device.adapterInfo, adapterInfo);
-  return 1;
-}
-
-function _wgpuDeviceGetLimits(devicePtr, limitsOutPtr) {
-  devicePtr >>>= 0;
-  limitsOutPtr >>>= 0;
-  var device = WebGPU.getJsObject(devicePtr);
-  WebGPU.fillLimitStruct(device.limits, limitsOutPtr);
-  return 1;
-}
-
-function _wgpuDeviceHasFeature(devicePtr, featureEnumValue) {
-  devicePtr >>>= 0;
-  var device = WebGPU.getJsObject(devicePtr);
-  return device.features.has(WebGPU.FeatureName[featureEnumValue]);
-}
-
-var _wgpuQueueSubmit = function(queuePtr, commandCount, commands) {
-  queuePtr >>>= 0;
-  commandCount >>>= 0;
-  commands >>>= 0;
+var _wgpuQueueSubmit = (queuePtr, commandCount, commands) => {
   var queue = WebGPU.getJsObject(queuePtr);
-  var cmds = Array.from(HEAP32.subarray((((commands) >>> 2)) >>> 0, ((commands + commandCount * 4) >>> 2) >>> 0), id => WebGPU.getJsObject(id));
+  var cmds = Array.from(HEAP32.subarray((((commands) >> 2)), ((commands + commandCount * 4) >> 2)), id => WebGPU.getJsObject(id));
   queue.submit(cmds);
 };
 
-function _wgpuQueueWriteBuffer(queuePtr, bufferPtr, bufferOffset, data, size) {
-  queuePtr >>>= 0;
-  bufferPtr >>>= 0;
-  bufferOffset = bigintToI53Checked(bufferOffset);
-  data >>>= 0;
-  size >>>= 0;
-  var queue = WebGPU.getJsObject(queuePtr);
-  var buffer = WebGPU.getJsObject(bufferPtr);
-  // There is a size limitation for ArrayBufferView. Work around by passing in a subarray
-  // instead of the whole heap. crbug.com/1201109
-  var subarray = HEAPU8.subarray(data >>> 0, data + size >>> 0);
-  queue.writeBuffer(buffer, bufferOffset, subarray, 0, size);
-}
-
-function _wgpuQueueWriteTexture(queuePtr, destinationPtr, data, dataSize, dataLayoutPtr, writeSizePtr) {
-  queuePtr >>>= 0;
-  destinationPtr >>>= 0;
-  data >>>= 0;
-  dataSize >>>= 0;
-  dataLayoutPtr >>>= 0;
-  writeSizePtr >>>= 0;
-  var queue = WebGPU.getJsObject(queuePtr);
-  var destination = WebGPU.makeTexelCopyTextureInfo(destinationPtr);
-  var dataLayout = WebGPU.makeTexelCopyBufferLayout(dataLayoutPtr);
-  var writeSize = WebGPU.makeExtent3D(writeSizePtr);
-  // This subarray isn't strictly necessary, but helps work around an issue
-  // where Chromium makes a copy of the entire heap. crbug.com/1134457
-  var subarray = HEAPU8.subarray(data >>> 0, data + dataSize >>> 0);
-  queue.writeTexture(destination, subarray, dataLayout, writeSize);
-}
-
-function _wgpuTextureCreateView(texturePtr, descriptor) {
-  texturePtr >>>= 0;
-  descriptor >>>= 0;
-  var desc;
-  if (descriptor) {
-    var swizzle;
-    var nextInChainPtr = HEAPU32[((descriptor) >>> 2) >>> 0];
-    if (nextInChainPtr !== 0) {
-      var sType = HEAP32[(((nextInChainPtr) + (4)) >>> 2) >>> 0];
-      var swizzleDescriptor = nextInChainPtr;
-      var swizzlePtr = swizzleDescriptor + 8;
-      var r = WebGPU.ComponentSwizzle[HEAP32[((swizzlePtr) >>> 2) >>> 0]] || "r";
-      var g = WebGPU.ComponentSwizzle[HEAP32[(((swizzlePtr) + (4)) >>> 2) >>> 0]] || "g";
-      var b = WebGPU.ComponentSwizzle[HEAP32[(((swizzlePtr) + (8)) >>> 2) >>> 0]] || "b";
-      var a = WebGPU.ComponentSwizzle[HEAP32[(((swizzlePtr) + (12)) >>> 2) >>> 0]] || "a";
-      swizzle = `${r}${g}${b}${a}`;
-    }
-    var mipLevelCount = HEAPU32[(((descriptor) + (24)) >>> 2) >>> 0];
-    var arrayLayerCount = HEAPU32[(((descriptor) + (32)) >>> 2) >>> 0];
-    desc = {
-      "label": WebGPU.makeStringFromOptionalStringView(descriptor + 4),
-      "format": WebGPU.TextureFormat[HEAP32[(((descriptor) + (12)) >>> 2) >>> 0]],
-      "dimension": WebGPU.TextureViewDimension[HEAP32[(((descriptor) + (16)) >>> 2) >>> 0]],
-      "baseMipLevel": HEAPU32[(((descriptor) + (20)) >>> 2) >>> 0],
-      "mipLevelCount": mipLevelCount === 4294967295 ? undefined : mipLevelCount,
-      "baseArrayLayer": HEAPU32[(((descriptor) + (28)) >>> 2) >>> 0],
-      "arrayLayerCount": arrayLayerCount === 4294967295 ? undefined : arrayLayerCount,
-      "aspect": WebGPU.TextureAspect[HEAP32[(((descriptor) + (36)) >>> 2) >>> 0]],
-      "usage": HEAPU32[(((descriptor) + (40)) >>> 2) >>> 0],
-      "swizzle": swizzle
-    };
-  }
-  var texture = WebGPU.getJsObject(texturePtr);
-  var ptr = _emwgpuCreateTextureView(0);
-  WebGPU.Internals.jsObjectInsert(ptr, texture.createView(desc));
-  return ptr;
-}
-
-function _wgpuTextureDestroy(texturePtr) {
-  texturePtr >>>= 0;
+var _wgpuTextureDestroy = texturePtr => {
   WebGPU.getJsObject(texturePtr).destroy();
-}
+};
 
-function _wgpuTextureGetDepthOrArrayLayers(texturePtr) {
-  texturePtr >>>= 0;
-  var texture = WebGPU.getJsObject(texturePtr);
-  return texture.depthOrArrayLayers;
-}
-
-function _wgpuTextureGetFormat(texturePtr) {
-  texturePtr >>>= 0;
+var _wgpuTextureGetFormat = texturePtr => {
   var texture = WebGPU.getJsObject(texturePtr);
   // Should return the enum integer instead of string.
   return WebGPU.TextureFormat.indexOf(texture.format);
-}
-
-function _wgpuTextureGetHeight(texturePtr) {
-  texturePtr >>>= 0;
-  var texture = WebGPU.getJsObject(texturePtr);
-  return texture.height;
-}
-
-function _wgpuTextureGetWidth(texturePtr) {
-  texturePtr >>>= 0;
-  var texture = WebGPU.getJsObject(texturePtr);
-  return texture.width;
-}
-
-var Asyncify = {
-  instrumentWasmImports(imports) {
-    var importPattern = /^(invoke_.*|__asyncjs__.*)$/;
-    for (let [x, original] of Object.entries(imports)) {
-      if (typeof original == "function") {
-        let isAsyncifyImport = original.isAsync || importPattern.test(x);
-        // Wrap async imports with a suspending WebAssembly function.
-        if (isAsyncifyImport) {
-          imports[x] = original = new WebAssembly.Suspending(original);
-        }
-      }
-    }
-  },
-  instrumentWasmExports(exports) {
-    var exportPattern = /^(main|__main_argc_argv)$/;
-    Asyncify.asyncExports = new Set;
-    var ret = {};
-    for (let [x, original] of Object.entries(exports)) {
-      if (typeof original == "function") {
-        // Wrap all exports with a promising WebAssembly function.
-        let isAsyncifyExport = exportPattern.test(x);
-        if (isAsyncifyExport) {
-          Asyncify.asyncExports.add(original);
-          original = Asyncify.makeAsyncFunction(original);
-        }
-        ret[x] = original;
-      } else {
-        ret[x] = original;
-      }
-    }
-    return ret;
-  },
-  asyncExports: null,
-  isAsyncExport(func) {
-    return Asyncify.asyncExports?.has(func);
-  },
-  handleAsync: async startAsync => {
-    try {
-      return await startAsync();
-    } finally {}
-  },
-  handleSleep: startAsync => Asyncify.handleAsync(() => new Promise(startAsync)),
-  makeAsyncFunction(original) {
-    return WebAssembly.promising(original);
-  }
 };
 
 var getCFunc = ident => {
@@ -8289,7 +6392,7 @@ var getCFunc = ident => {
 };
 
 var writeArrayToMemory = (array, buffer) => {
-  HEAP8.set(array, buffer >>> 0);
+  HEAP8.set(array, buffer);
 };
 
 /**
@@ -8318,7 +6421,6 @@ var writeArrayToMemory = (array, buffer) => {
     if (returnType === "string") {
       return UTF8ToString(ret);
     }
-    if (returnType === "pointer") return ret >>> 0;
     if (returnType === "boolean") return Boolean(ret);
     return ret;
   }
@@ -8341,8 +6443,6 @@ var writeArrayToMemory = (array, buffer) => {
     if (stack) stackRestore(stack);
     return convertReturnValue(ret);
   }
-  var asyncMode = opts?.async;
-  if (asyncMode) return ret.then(onDone);
   ret = onDone(ret);
   return ret;
 };
@@ -8414,105 +6514,80 @@ Module["FS_createLazyFile"] = FS_createLazyFile;
 // End JS library exports
 // end include: postlibrary.js
 var ASM_CONSTS = {
-  2418553: $0 => {
-    const device = WebGPU.getJsObject($0);
-    return device.features.has("subgroups");
-  },
-  2418637: () => {
+  707768: () => {
     specialHTMLTargets["#canvas"] = Module.canvas;
   }
 };
+
+function JsWrapLoggingHelpers() {
+  if (!Module["_decodeBase64"]) {
+    Module["_decodeBase64"] = function(encoded_key_ptr) {
+      const encodedStr = UTF8ToString(encoded_key_ptr);
+      return atob(encodedStr);
+    };
+  }
+}
 
 function JsOnEmptyPacketListener(output_stream_name, timestamp) {
   Module._wrapEmptyPacketListenerOutput(output_stream_name, timestamp);
 }
 
-JsOnEmptyPacketListener.sig = "vid";
-
 function JsOnVectorFinishedListener(output_stream_name, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, undefined, true, timestamp);
 }
-
-JsOnVectorFinishedListener.sig = "vii";
 
 function JsOnSimpleListenerBool(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, timestamp);
 }
 
-JsOnSimpleListenerBool.sig = "viid";
-
 function JsOnVectorListenerBool(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, false, timestamp);
 }
-
-JsOnVectorListenerBool.sig = "viid";
 
 function JsOnSimpleListenerInt(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, timestamp);
 }
 
-JsOnSimpleListenerInt.sig = "viid";
-
 function JsOnVectorListenerInt(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, false, timestamp);
 }
-
-JsOnVectorListenerInt.sig = "viid";
 
 function JsOnSimpleListenerUint(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, timestamp);
 }
 
-JsOnSimpleListenerUint.sig = "viid";
-
 function JsOnVectorListenerUint(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, false, timestamp);
 }
-
-JsOnVectorListenerUint.sig = "viid";
 
 function JsOnSimpleListenerDouble(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, timestamp);
 }
 
-JsOnSimpleListenerDouble.sig = "vidd";
-
 function JsOnVectorListenerDouble(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, false, timestamp);
 }
-
-JsOnVectorListenerDouble.sig = "vidd";
 
 function JsOnSimpleListenerFloat(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, timestamp);
 }
 
-JsOnSimpleListenerFloat.sig = "vifd";
-
 function JsOnVectorListenerFloat(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, out_data, false, timestamp);
 }
-
-JsOnVectorListenerFloat.sig = "vifd";
 
 function JsOnSimpleListenerString(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, UTF8ToString(out_data), timestamp);
 }
 
-JsOnSimpleListenerString.sig = "viid";
-
 function JsOnVectorListenerString(output_stream_name, out_data, timestamp) {
   Module._wrapSimpleListenerOutput(output_stream_name, UTF8ToString(out_data), false, timestamp);
 }
-
-JsOnVectorListenerString.sig = "viid";
 
 function JsOnVectorListenerProto(output_stream_name, proto_ptr, proto_size, make_deep_copy, timestamp) {
   const newProtoArray = make_deep_copy ? Module.HEAPU8.slice(proto_ptr, proto_ptr + proto_size) : new Uint8Array(Module.HEAPU8.buffer, proto_ptr, proto_size);
   Module._wrapSimpleListenerOutput(output_stream_name, newProtoArray, false, timestamp);
 }
-
-JsOnVectorListenerProto.sig = "viiiid";
 
 function JsWrapSimpleListeners() {
   if (!Module._wrapSimpleListenerOutput) {
@@ -8537,14 +6612,10 @@ function JsWrapSimpleListeners() {
   }
 }
 
-JsWrapSimpleListeners.sig = "v";
-
 function JsOnSimpleListenerBinaryArray(output_stream_name, binary_ptr, binary_size, make_deep_copy, timestamp) {
   const newProtoArray = make_deep_copy ? Module.HEAPU8.slice(binary_ptr, binary_ptr + binary_size) : new Uint8Array(Module.HEAPU8.buffer, binary_ptr, binary_size);
   Module._wrapSimpleListenerOutput(output_stream_name, newProtoArray, timestamp);
 }
-
-JsOnSimpleListenerBinaryArray.sig = "viiiid";
 
 function __asyncjs__mediapipe_map_buffer_jspi(buffer_handle, data) {
   return Asyncify.handleAsync(async () => {
@@ -8555,68 +6626,22 @@ function __asyncjs__mediapipe_map_buffer_jspi(buffer_handle, data) {
       await buffer.mapAsync(GPUMapMode.READ);
     }
     const mapped = buffer.getMappedRange();
-    HEAPU8.set(new Uint8Array(mapped), data >>> 0);
+    HEAPU8.set(new Uint8Array(mapped), data);
     buffer.unmap();
   });
 }
 
-__asyncjs__mediapipe_map_buffer_jspi.sig = "vii";
-
-function AudioTranscriberThrowJsError(message) {
-  throw new Error(UTF8ToString(message));
+function hardware_concurrency() {
+  var concurrency = 1;
+  try {
+    concurrency = self.navigator.hardwareConcurrency;
+  } catch (e) {}
+  return concurrency;
 }
-
-AudioTranscriberThrowJsError.sig = "vi";
-
-function TextToSpeechThrowJsError(message) {
-  throw new Error(UTF8ToString(message));
-}
-
-TextToSpeechThrowJsError.sig = "vi";
-
-function JsWrapLoggingHelpers() {
-  if (!Module["_decodeBase64"]) {
-    Module["_decodeBase64"] = function(encoded_key_ptr) {
-      const encodedStr = UTF8ToString(encoded_key_ptr);
-      return atob(encodedStr);
-    };
-  }
-}
-
-JsWrapLoggingHelpers.sig = "v";
-
-function JsGetDeviceMinSubgroupSize(deviceId) {
-  const device = WebGPU.getJsObject(deviceId);
-  return device.adapterInfo.subgroupMinSize || device.limits.minSubgroupSize;
-}
-
-JsGetDeviceMinSubgroupSize.sig = "ii";
-
-function JsGetDeviceMaxSubgroupSize(deviceId) {
-  const device = WebGPU.getJsObject(deviceId);
-  return device.adapterInfo.subgroupMaxSize || device.limits.maxSubgroupSize;
-}
-
-JsGetDeviceMaxSubgroupSize.sig = "ii";
-
-function __asyncjs__ReadBufferDataJs(buffer_handle, data_ptr) {
-  return Asyncify.handleAsync(async () => {
-    const gpuReadBuffer = WebGPU.getJsObject(buffer_handle);
-    await gpuReadBuffer.mapAsync(GPUMapMode.READ);
-    const arrayBuffer = gpuReadBuffer.getMappedRange();
-    const u8view = new Uint8Array(arrayBuffer);
-    HEAPU8.set(u8view, data_ptr >>> 0 >>> 0);
-    gpuReadBuffer.unmap();
-  });
-}
-
-__asyncjs__ReadBufferDataJs.sig = "vii";
 
 function UseBottomLeftGpuOrigin() {
   return (Module && Module.gpuOriginForWebTexturesIsBottomLeft);
 }
-
-UseBottomLeftGpuOrigin.sig = "i";
 
 function custom_emscripten_dbgn(str, len) {
   if (typeof (dbg) !== "undefined") {
@@ -8631,8 +6656,6 @@ function custom_emscripten_dbgn(str, len) {
   }
 }
 
-custom_emscripten_dbgn.sig = "vii";
-
 function JsWrapErrorListenerInternal(code, message) {
   if (Module.errorListener) {
     const stringMessage = UTF8ToString(message);
@@ -8640,379 +6663,291 @@ function JsWrapErrorListenerInternal(code, message) {
   }
 }
 
-JsWrapErrorListenerInternal.sig = "vii";
-
 // Imports from the Wasm binary.
-var _configureAudio, _addAudioToInputStream, _free, _malloc, _registerModelResourcesGraphService, _bindTextureToStream, _addBoundTextureToStream, _addDoubleToInputStream, _addFloatToInputStream, _addBoolToInputStream, _addIntToInputStream, _addUintToInputStream, _addStringToInputStream, _addRawDataSpanToInputStream, _allocateBoolVector, _allocateFloatVector, _allocateDoubleVector, _allocateIntVector, _allocateUintVector, _allocateStringVector, _addBoolVectorEntry, _addFloatVectorEntry, _addDoubleVectorEntry, _addIntVectorEntry, _addUintVectorEntry, _addStringVectorEntry, _addBoolVectorToInputStream, _addFloatVectorToInputStream, _addDoubleVectorToInputStream, _addIntVectorToInputStream, _addUintVectorToInputStream, _addStringVectorToInputStream, _addFlatHashMapToInputStream, _addProtoToInputStream, _addEmptyPacketToInputStream, _addBoolToInputSidePacket, _addDoubleToInputSidePacket, _addFloatToInputSidePacket, _addIntToInputSidePacket, _addUintToInputSidePacket, _addStringToInputSidePacket, _addRawDataSpanToInputSidePacket, _addProtoToInputSidePacket, _addBoolVectorToInputSidePacket, _addDoubleVectorToInputSidePacket, _addFloatVectorToInputSidePacket, _addIntVectorToInputSidePacket, _addUintVectorToInputSidePacket, _addStringVectorToInputSidePacket, _attachBoolListener, _attachBoolVectorListener, _attachDoubleListener, _attachDoubleVectorListener, _attachFloatListener, _attachFloatVectorListener, _attachIntListener, _attachIntVectorListener, _attachUintListener, _attachUintVectorListener, _attachStringListener, _attachStringVectorListener, _attachProtoListener, _attachProtoVectorListener, _getGraphConfig, _wgpuDeviceAddRef, _ma_device__on_notification_unlocked, _ma_malloc_emscripten, _ma_free_emscripten, _ma_device_process_pcm_frames_capture__webaudio, _ma_device_process_pcm_frames_playback__webaudio, _mediapipeLoggerGetEncodedApiKey, ___getTypeName, _emwgpuCreateBindGroup, _emwgpuCreateBindGroupLayout, _emwgpuCreateCommandBuffer, _emwgpuCreateCommandEncoder, _emwgpuCreateComputePassEncoder, _emwgpuCreateComputePipeline, _emwgpuCreateExternalTexture, _emwgpuCreatePipelineLayout, _emwgpuCreateQuerySet, _emwgpuCreateRenderBundle, _emwgpuCreateRenderBundleEncoder, _emwgpuCreateRenderPassEncoder, _emwgpuCreateRenderPipeline, _emwgpuCreateSampler, _emwgpuCreateSurface, _emwgpuCreateTexture, _emwgpuCreateTextureView, _emwgpuCreateAdapter, _emwgpuImportBuffer, _emwgpuCreateDevice, _emwgpuCreateQueue, _emwgpuCreateShaderModule, _emwgpuOnCreateComputePipelineCompleted, _emwgpuOnMapAsyncCompleted, _emwgpuOnWorkDoneCompleted, _clearSubgraphs, _pushBinarySubgraph, _pushTextSubgraph, _changeBinaryGraph, _changeTextGraph, _processGl, _process, _bindTextureToCanvas, _requestShaderRefreshOnGraphChange, _waitUntilIdle, _closeGraph, _setAutoRenderToScreen, _emscripten_builtin_memalign, _memalign, __emscripten_stack_restore, __emscripten_stack_alloc, _emscripten_stack_get_current, memory, _kVersionStampBuildChangelistStr, _kVersionStampCitcSnapshotStr, _kVersionStampCitcWorkspaceIdStr, _kVersionStampSourceUriStr, _kVersionStampBuildClientStr, _kVersionStampBuildClientMintStatusStr, _kVersionStampBuildCompilerStr, _kVersionStampBuildDateTimePstStr, _kVersionStampBuildDepotPathStr, _kVersionStampBuildIdStr, _kVersionStampBuildInfoStr, _kVersionStampBuildLabelStr, _kVersionStampBuildTargetStr, _kVersionStampBuildTimestampStr, _kVersionStampBuildToolStr, _kVersionStampG3BuildTargetStr, _kVersionStampVerifiableStr, _kVersionStampBuildFdoTypeStr, _kVersionStampBuildBaselineChangelistStr, _kVersionStampBuildLtoTypeStr, _kVersionStampBuildPropellerTypeStr, _kVersionStampBuildPghoTypeStr, _kVersionStampBuildFdoProfileChangelistStr, _kVersionStampBuildMemprofProfileChangelistStr, _kVersionStampBuildUsernameStr, _kVersionStampBuildHostnameStr, _kVersionStampBuildDirectoryStr, _kVersionStampBuildChangelistInt, _kVersionStampCitcSnapshotInt, _kVersionStampBuildClientMintStatusInt, _kVersionStampBuildTimestampInt, _kVersionStampVerifiableInt, _kVersionStampBuildCoverageEnabledInt, _kVersionStampBuildBaselineChangelistInt, _kVersionStampPrecookedTimestampStr, _kVersionStampPrecookedClientInfoStr, __indirect_function_table, _kVersionStampBuildHasHardeningProtobuf, wasmMemory, wasmTable;
+var _configureAudio, _addAudioToInputStream, _free, _malloc, _mediapipeLoggerGetEncodedApiKey, _registerModelResourcesGraphService, _bindTextureToStream, _addBoundTextureToStream, _addDoubleToInputStream, _addFloatToInputStream, _addBoolToInputStream, _addIntToInputStream, _addUintToInputStream, _addStringToInputStream, _addRawDataSpanToInputStream, _allocateBoolVector, _allocateFloatVector, _allocateDoubleVector, _allocateIntVector, _allocateUintVector, _allocateStringVector, _addBoolVectorEntry, _addFloatVectorEntry, _addDoubleVectorEntry, _addIntVectorEntry, _addUintVectorEntry, _addStringVectorEntry, _addBoolVectorToInputStream, _addFloatVectorToInputStream, _addDoubleVectorToInputStream, _addIntVectorToInputStream, _addUintVectorToInputStream, _addStringVectorToInputStream, _addFlatHashMapToInputStream, _addProtoToInputStream, _addEmptyPacketToInputStream, _addBoolToInputSidePacket, _addDoubleToInputSidePacket, _addFloatToInputSidePacket, _addIntToInputSidePacket, _addUintToInputSidePacket, _addStringToInputSidePacket, _addRawDataSpanToInputSidePacket, _addProtoToInputSidePacket, _addBoolVectorToInputSidePacket, _addDoubleVectorToInputSidePacket, _addFloatVectorToInputSidePacket, _addIntVectorToInputSidePacket, _addUintVectorToInputSidePacket, _addStringVectorToInputSidePacket, _attachBoolListener, _attachBoolVectorListener, _attachDoubleListener, _attachDoubleVectorListener, _attachFloatListener, _attachFloatVectorListener, _attachIntListener, _attachIntVectorListener, _attachUintListener, _attachUintVectorListener, _attachStringListener, _attachStringVectorListener, _attachProtoListener, _attachProtoVectorListener, _getGraphConfig, _emwgpuCreateBindGroup, _emwgpuCreateBindGroupLayout, _emwgpuCreateCommandBuffer, _emwgpuCreateCommandEncoder, _emwgpuCreateComputePassEncoder, _emwgpuCreateComputePipeline, _emwgpuCreateExternalTexture, _emwgpuCreatePipelineLayout, _emwgpuCreateQuerySet, _emwgpuCreateRenderBundle, _emwgpuCreateRenderBundleEncoder, _emwgpuCreateRenderPassEncoder, _emwgpuCreateRenderPipeline, _emwgpuCreateSampler, _emwgpuCreateSurface, _emwgpuCreateTexture, _emwgpuCreateTextureView, _emwgpuCreateAdapter, _emwgpuImportBuffer, _emwgpuCreateDevice, _emwgpuCreateQueue, _emwgpuCreateShaderModule, _clearSubgraphs, _pushBinarySubgraph, _pushTextSubgraph, _changeBinaryGraph, _changeTextGraph, _processGl, _process, _bindTextureToCanvas, _requestShaderRefreshOnGraphChange, _waitUntilIdle, _closeGraph, _setAutoRenderToScreen, _emscripten_builtin_memalign, __emscripten_tempret_set, __emscripten_stack_restore, __emscripten_stack_alloc, _emscripten_stack_get_current, dynCall_ji, dynCall_jii, dynCall_iiiijij, dynCall_viji, dynCall_iiiji, dynCall_jjj, dynCall_iiiijj, dynCall_viijj, dynCall_viiijjj, dynCall_vij, dynCall_viijii, dynCall_vijjj, dynCall_vj, dynCall_viij, dynCall_jiji, dynCall_iiiiij, dynCall_iiiiijj, dynCall_iiiiiijj, memory, _kVersionStampBuildChangelistStr, _kVersionStampCitcSnapshotStr, _kVersionStampCitcWorkspaceIdStr, _kVersionStampSourceUriStr, _kVersionStampBuildClientStr, _kVersionStampBuildClientMintStatusStr, _kVersionStampBuildCompilerStr, _kVersionStampBuildDateTimePstStr, _kVersionStampBuildDepotPathStr, _kVersionStampBuildIdStr, _kVersionStampBuildInfoStr, _kVersionStampBuildLabelStr, _kVersionStampBuildTargetStr, _kVersionStampBuildTimestampStr, _kVersionStampBuildToolStr, _kVersionStampG3BuildTargetStr, _kVersionStampVerifiableStr, _kVersionStampBuildFdoTypeStr, _kVersionStampBuildBaselineChangelistStr, _kVersionStampBuildLtoTypeStr, _kVersionStampBuildPropellerTypeStr, _kVersionStampBuildPghoTypeStr, _kVersionStampBuildFdoProfileChangelistStr, _kVersionStampBuildMemprofProfileChangelistStr, _kVersionStampBuildUsernameStr, _kVersionStampBuildHostnameStr, _kVersionStampBuildDirectoryStr, _kVersionStampBuildChangelistInt, _kVersionStampCitcSnapshotInt, _kVersionStampBuildClientMintStatusInt, _kVersionStampBuildTimestampInt, _kVersionStampVerifiableInt, _kVersionStampBuildCoverageEnabledInt, _kVersionStampBuildBaselineChangelistInt, _kVersionStampPrecookedTimestampStr, _kVersionStampPrecookedClientInfoStr, __indirect_function_table, _kVersionStampBuildHasHardeningProtobuf, wasmMemory, wasmTable;
 
 function assignWasmExports(wasmExports) {
-  _configureAudio = Module["_configureAudio"] = wasmExports["configureAudio"];
-  _addAudioToInputStream = Module["_addAudioToInputStream"] = wasmExports["addAudioToInputStream"];
-  _free = Module["_free"] = wasmExports["free"];
-  _malloc = Module["_malloc"] = wasmExports["malloc"];
-  _registerModelResourcesGraphService = Module["_registerModelResourcesGraphService"] = wasmExports["registerModelResourcesGraphService"];
-  _bindTextureToStream = Module["_bindTextureToStream"] = wasmExports["bindTextureToStream"];
-  _addBoundTextureToStream = Module["_addBoundTextureToStream"] = wasmExports["addBoundTextureToStream"];
-  _addDoubleToInputStream = Module["_addDoubleToInputStream"] = wasmExports["addDoubleToInputStream"];
-  _addFloatToInputStream = Module["_addFloatToInputStream"] = wasmExports["addFloatToInputStream"];
-  _addBoolToInputStream = Module["_addBoolToInputStream"] = wasmExports["addBoolToInputStream"];
-  _addIntToInputStream = Module["_addIntToInputStream"] = wasmExports["addIntToInputStream"];
-  _addUintToInputStream = Module["_addUintToInputStream"] = wasmExports["addUintToInputStream"];
-  _addStringToInputStream = Module["_addStringToInputStream"] = wasmExports["addStringToInputStream"];
-  _addRawDataSpanToInputStream = Module["_addRawDataSpanToInputStream"] = wasmExports["addRawDataSpanToInputStream"];
-  _allocateBoolVector = Module["_allocateBoolVector"] = wasmExports["allocateBoolVector"];
-  _allocateFloatVector = Module["_allocateFloatVector"] = wasmExports["allocateFloatVector"];
-  _allocateDoubleVector = Module["_allocateDoubleVector"] = wasmExports["allocateDoubleVector"];
-  _allocateIntVector = Module["_allocateIntVector"] = wasmExports["allocateIntVector"];
-  _allocateUintVector = Module["_allocateUintVector"] = wasmExports["allocateUintVector"];
-  _allocateStringVector = Module["_allocateStringVector"] = wasmExports["allocateStringVector"];
-  _addBoolVectorEntry = Module["_addBoolVectorEntry"] = wasmExports["addBoolVectorEntry"];
-  _addFloatVectorEntry = Module["_addFloatVectorEntry"] = wasmExports["addFloatVectorEntry"];
-  _addDoubleVectorEntry = Module["_addDoubleVectorEntry"] = wasmExports["addDoubleVectorEntry"];
-  _addIntVectorEntry = Module["_addIntVectorEntry"] = wasmExports["addIntVectorEntry"];
-  _addUintVectorEntry = Module["_addUintVectorEntry"] = wasmExports["addUintVectorEntry"];
-  _addStringVectorEntry = Module["_addStringVectorEntry"] = wasmExports["addStringVectorEntry"];
-  _addBoolVectorToInputStream = Module["_addBoolVectorToInputStream"] = wasmExports["addBoolVectorToInputStream"];
-  _addFloatVectorToInputStream = Module["_addFloatVectorToInputStream"] = wasmExports["addFloatVectorToInputStream"];
-  _addDoubleVectorToInputStream = Module["_addDoubleVectorToInputStream"] = wasmExports["addDoubleVectorToInputStream"];
-  _addIntVectorToInputStream = Module["_addIntVectorToInputStream"] = wasmExports["addIntVectorToInputStream"];
-  _addUintVectorToInputStream = Module["_addUintVectorToInputStream"] = wasmExports["addUintVectorToInputStream"];
-  _addStringVectorToInputStream = Module["_addStringVectorToInputStream"] = wasmExports["addStringVectorToInputStream"];
-  _addFlatHashMapToInputStream = Module["_addFlatHashMapToInputStream"] = wasmExports["addFlatHashMapToInputStream"];
-  _addProtoToInputStream = Module["_addProtoToInputStream"] = wasmExports["addProtoToInputStream"];
-  _addEmptyPacketToInputStream = Module["_addEmptyPacketToInputStream"] = wasmExports["addEmptyPacketToInputStream"];
-  _addBoolToInputSidePacket = Module["_addBoolToInputSidePacket"] = wasmExports["addBoolToInputSidePacket"];
-  _addDoubleToInputSidePacket = Module["_addDoubleToInputSidePacket"] = wasmExports["addDoubleToInputSidePacket"];
-  _addFloatToInputSidePacket = Module["_addFloatToInputSidePacket"] = wasmExports["addFloatToInputSidePacket"];
-  _addIntToInputSidePacket = Module["_addIntToInputSidePacket"] = wasmExports["addIntToInputSidePacket"];
-  _addUintToInputSidePacket = Module["_addUintToInputSidePacket"] = wasmExports["addUintToInputSidePacket"];
-  _addStringToInputSidePacket = Module["_addStringToInputSidePacket"] = wasmExports["addStringToInputSidePacket"];
-  _addRawDataSpanToInputSidePacket = Module["_addRawDataSpanToInputSidePacket"] = wasmExports["addRawDataSpanToInputSidePacket"];
-  _addProtoToInputSidePacket = Module["_addProtoToInputSidePacket"] = wasmExports["addProtoToInputSidePacket"];
-  _addBoolVectorToInputSidePacket = Module["_addBoolVectorToInputSidePacket"] = wasmExports["addBoolVectorToInputSidePacket"];
-  _addDoubleVectorToInputSidePacket = Module["_addDoubleVectorToInputSidePacket"] = wasmExports["addDoubleVectorToInputSidePacket"];
-  _addFloatVectorToInputSidePacket = Module["_addFloatVectorToInputSidePacket"] = wasmExports["addFloatVectorToInputSidePacket"];
-  _addIntVectorToInputSidePacket = Module["_addIntVectorToInputSidePacket"] = wasmExports["addIntVectorToInputSidePacket"];
-  _addUintVectorToInputSidePacket = Module["_addUintVectorToInputSidePacket"] = wasmExports["addUintVectorToInputSidePacket"];
-  _addStringVectorToInputSidePacket = Module["_addStringVectorToInputSidePacket"] = wasmExports["addStringVectorToInputSidePacket"];
-  _attachBoolListener = Module["_attachBoolListener"] = wasmExports["attachBoolListener"];
-  _attachBoolVectorListener = Module["_attachBoolVectorListener"] = wasmExports["attachBoolVectorListener"];
-  _attachDoubleListener = Module["_attachDoubleListener"] = wasmExports["attachDoubleListener"];
-  _attachDoubleVectorListener = Module["_attachDoubleVectorListener"] = wasmExports["attachDoubleVectorListener"];
-  _attachFloatListener = Module["_attachFloatListener"] = wasmExports["attachFloatListener"];
-  _attachFloatVectorListener = Module["_attachFloatVectorListener"] = wasmExports["attachFloatVectorListener"];
-  _attachIntListener = Module["_attachIntListener"] = wasmExports["attachIntListener"];
-  _attachIntVectorListener = Module["_attachIntVectorListener"] = wasmExports["attachIntVectorListener"];
-  _attachUintListener = Module["_attachUintListener"] = wasmExports["attachUintListener"];
-  _attachUintVectorListener = Module["_attachUintVectorListener"] = wasmExports["attachUintVectorListener"];
-  _attachStringListener = Module["_attachStringListener"] = wasmExports["attachStringListener"];
-  _attachStringVectorListener = Module["_attachStringVectorListener"] = wasmExports["attachStringVectorListener"];
-  _attachProtoListener = Module["_attachProtoListener"] = wasmExports["attachProtoListener"];
-  _attachProtoVectorListener = Module["_attachProtoVectorListener"] = wasmExports["attachProtoVectorListener"];
-  _getGraphConfig = Module["_getGraphConfig"] = wasmExports["getGraphConfig"];
-  _wgpuDeviceAddRef = wasmExports["wgpuDeviceAddRef"];
-  _ma_device__on_notification_unlocked = Module["_ma_device__on_notification_unlocked"] = wasmExports["ma_device__on_notification_unlocked"];
-  _ma_malloc_emscripten = Module["_ma_malloc_emscripten"] = wasmExports["ma_malloc_emscripten"];
-  _ma_free_emscripten = Module["_ma_free_emscripten"] = wasmExports["ma_free_emscripten"];
-  _ma_device_process_pcm_frames_capture__webaudio = Module["_ma_device_process_pcm_frames_capture__webaudio"] = wasmExports["ma_device_process_pcm_frames_capture__webaudio"];
-  _ma_device_process_pcm_frames_playback__webaudio = Module["_ma_device_process_pcm_frames_playback__webaudio"] = wasmExports["ma_device_process_pcm_frames_playback__webaudio"];
-  _mediapipeLoggerGetEncodedApiKey = Module["_mediapipeLoggerGetEncodedApiKey"] = wasmExports["mediapipeLoggerGetEncodedApiKey"];
-  ___getTypeName = wasmExports["__getTypeName"];
-  _emwgpuCreateBindGroup = wasmExports["emwgpuCreateBindGroup"];
-  _emwgpuCreateBindGroupLayout = wasmExports["emwgpuCreateBindGroupLayout"];
-  _emwgpuCreateCommandBuffer = wasmExports["emwgpuCreateCommandBuffer"];
-  _emwgpuCreateCommandEncoder = wasmExports["emwgpuCreateCommandEncoder"];
-  _emwgpuCreateComputePassEncoder = wasmExports["emwgpuCreateComputePassEncoder"];
-  _emwgpuCreateComputePipeline = wasmExports["emwgpuCreateComputePipeline"];
-  _emwgpuCreateExternalTexture = wasmExports["emwgpuCreateExternalTexture"];
-  _emwgpuCreatePipelineLayout = wasmExports["emwgpuCreatePipelineLayout"];
-  _emwgpuCreateQuerySet = wasmExports["emwgpuCreateQuerySet"];
-  _emwgpuCreateRenderBundle = wasmExports["emwgpuCreateRenderBundle"];
-  _emwgpuCreateRenderBundleEncoder = wasmExports["emwgpuCreateRenderBundleEncoder"];
-  _emwgpuCreateRenderPassEncoder = wasmExports["emwgpuCreateRenderPassEncoder"];
-  _emwgpuCreateRenderPipeline = wasmExports["emwgpuCreateRenderPipeline"];
-  _emwgpuCreateSampler = wasmExports["emwgpuCreateSampler"];
-  _emwgpuCreateSurface = wasmExports["emwgpuCreateSurface"];
-  _emwgpuCreateTexture = wasmExports["emwgpuCreateTexture"];
-  _emwgpuCreateTextureView = wasmExports["emwgpuCreateTextureView"];
-  _emwgpuCreateAdapter = wasmExports["emwgpuCreateAdapter"];
-  _emwgpuImportBuffer = wasmExports["emwgpuImportBuffer"];
-  _emwgpuCreateDevice = wasmExports["emwgpuCreateDevice"];
-  _emwgpuCreateQueue = wasmExports["emwgpuCreateQueue"];
-  _emwgpuCreateShaderModule = wasmExports["emwgpuCreateShaderModule"];
-  _emwgpuOnCreateComputePipelineCompleted = wasmExports["emwgpuOnCreateComputePipelineCompleted"];
-  _emwgpuOnMapAsyncCompleted = wasmExports["emwgpuOnMapAsyncCompleted"];
-  _emwgpuOnWorkDoneCompleted = wasmExports["emwgpuOnWorkDoneCompleted"];
-  _clearSubgraphs = Module["_clearSubgraphs"] = wasmExports["clearSubgraphs"];
-  _pushBinarySubgraph = Module["_pushBinarySubgraph"] = wasmExports["pushBinarySubgraph"];
-  _pushTextSubgraph = Module["_pushTextSubgraph"] = wasmExports["pushTextSubgraph"];
-  _changeBinaryGraph = Module["_changeBinaryGraph"] = wasmExports["changeBinaryGraph"];
-  _changeTextGraph = Module["_changeTextGraph"] = wasmExports["changeTextGraph"];
-  _processGl = Module["_processGl"] = wasmExports["processGl"];
-  _process = Module["_process"] = wasmExports["process"];
-  _bindTextureToCanvas = Module["_bindTextureToCanvas"] = wasmExports["bindTextureToCanvas"];
-  _requestShaderRefreshOnGraphChange = Module["_requestShaderRefreshOnGraphChange"] = wasmExports["requestShaderRefreshOnGraphChange"];
-  _waitUntilIdle = Module["_waitUntilIdle"] = wasmExports["waitUntilIdle"];
-  _closeGraph = Module["_closeGraph"] = wasmExports["closeGraph"];
-  _setAutoRenderToScreen = Module["_setAutoRenderToScreen"] = wasmExports["setAutoRenderToScreen"];
-  _emscripten_builtin_memalign = wasmExports["emscripten_builtin_memalign"];
-  _memalign = wasmExports["memalign"];
-  __emscripten_stack_restore = wasmExports["_emscripten_stack_restore"];
-  __emscripten_stack_alloc = wasmExports["_emscripten_stack_alloc"];
-  _emscripten_stack_get_current = wasmExports["emscripten_stack_get_current"];
-  memory = wasmMemory = wasmExports["memory"];
-  _kVersionStampBuildChangelistStr = Module["_kVersionStampBuildChangelistStr"] = (wasmExports["kVersionStampBuildChangelistStr"].value) >>> 0;
-  _kVersionStampCitcSnapshotStr = Module["_kVersionStampCitcSnapshotStr"] = (wasmExports["kVersionStampCitcSnapshotStr"].value) >>> 0;
-  _kVersionStampCitcWorkspaceIdStr = Module["_kVersionStampCitcWorkspaceIdStr"] = (wasmExports["kVersionStampCitcWorkspaceIdStr"].value) >>> 0;
-  _kVersionStampSourceUriStr = Module["_kVersionStampSourceUriStr"] = (wasmExports["kVersionStampSourceUriStr"].value) >>> 0;
-  _kVersionStampBuildClientStr = Module["_kVersionStampBuildClientStr"] = (wasmExports["kVersionStampBuildClientStr"].value) >>> 0;
-  _kVersionStampBuildClientMintStatusStr = Module["_kVersionStampBuildClientMintStatusStr"] = (wasmExports["kVersionStampBuildClientMintStatusStr"].value) >>> 0;
-  _kVersionStampBuildCompilerStr = Module["_kVersionStampBuildCompilerStr"] = (wasmExports["kVersionStampBuildCompilerStr"].value) >>> 0;
-  _kVersionStampBuildDateTimePstStr = Module["_kVersionStampBuildDateTimePstStr"] = (wasmExports["kVersionStampBuildDateTimePstStr"].value) >>> 0;
-  _kVersionStampBuildDepotPathStr = Module["_kVersionStampBuildDepotPathStr"] = (wasmExports["kVersionStampBuildDepotPathStr"].value) >>> 0;
-  _kVersionStampBuildIdStr = Module["_kVersionStampBuildIdStr"] = (wasmExports["kVersionStampBuildIdStr"].value) >>> 0;
-  _kVersionStampBuildInfoStr = Module["_kVersionStampBuildInfoStr"] = (wasmExports["kVersionStampBuildInfoStr"].value) >>> 0;
-  _kVersionStampBuildLabelStr = Module["_kVersionStampBuildLabelStr"] = (wasmExports["kVersionStampBuildLabelStr"].value) >>> 0;
-  _kVersionStampBuildTargetStr = Module["_kVersionStampBuildTargetStr"] = (wasmExports["kVersionStampBuildTargetStr"].value) >>> 0;
-  _kVersionStampBuildTimestampStr = Module["_kVersionStampBuildTimestampStr"] = (wasmExports["kVersionStampBuildTimestampStr"].value) >>> 0;
-  _kVersionStampBuildToolStr = Module["_kVersionStampBuildToolStr"] = (wasmExports["kVersionStampBuildToolStr"].value) >>> 0;
-  _kVersionStampG3BuildTargetStr = Module["_kVersionStampG3BuildTargetStr"] = (wasmExports["kVersionStampG3BuildTargetStr"].value) >>> 0;
-  _kVersionStampVerifiableStr = Module["_kVersionStampVerifiableStr"] = (wasmExports["kVersionStampVerifiableStr"].value) >>> 0;
-  _kVersionStampBuildFdoTypeStr = Module["_kVersionStampBuildFdoTypeStr"] = (wasmExports["kVersionStampBuildFdoTypeStr"].value) >>> 0;
-  _kVersionStampBuildBaselineChangelistStr = Module["_kVersionStampBuildBaselineChangelistStr"] = (wasmExports["kVersionStampBuildBaselineChangelistStr"].value) >>> 0;
-  _kVersionStampBuildLtoTypeStr = Module["_kVersionStampBuildLtoTypeStr"] = (wasmExports["kVersionStampBuildLtoTypeStr"].value) >>> 0;
-  _kVersionStampBuildPropellerTypeStr = Module["_kVersionStampBuildPropellerTypeStr"] = (wasmExports["kVersionStampBuildPropellerTypeStr"].value) >>> 0;
-  _kVersionStampBuildPghoTypeStr = Module["_kVersionStampBuildPghoTypeStr"] = (wasmExports["kVersionStampBuildPghoTypeStr"].value) >>> 0;
-  _kVersionStampBuildFdoProfileChangelistStr = Module["_kVersionStampBuildFdoProfileChangelistStr"] = (wasmExports["kVersionStampBuildFdoProfileChangelistStr"].value) >>> 0;
-  _kVersionStampBuildMemprofProfileChangelistStr = Module["_kVersionStampBuildMemprofProfileChangelistStr"] = (wasmExports["kVersionStampBuildMemprofProfileChangelistStr"].value) >>> 0;
-  _kVersionStampBuildUsernameStr = Module["_kVersionStampBuildUsernameStr"] = (wasmExports["kVersionStampBuildUsernameStr"].value) >>> 0;
-  _kVersionStampBuildHostnameStr = Module["_kVersionStampBuildHostnameStr"] = (wasmExports["kVersionStampBuildHostnameStr"].value) >>> 0;
-  _kVersionStampBuildDirectoryStr = Module["_kVersionStampBuildDirectoryStr"] = (wasmExports["kVersionStampBuildDirectoryStr"].value) >>> 0;
-  _kVersionStampBuildChangelistInt = Module["_kVersionStampBuildChangelistInt"] = (wasmExports["kVersionStampBuildChangelistInt"].value) >>> 0;
-  _kVersionStampCitcSnapshotInt = Module["_kVersionStampCitcSnapshotInt"] = (wasmExports["kVersionStampCitcSnapshotInt"].value) >>> 0;
-  _kVersionStampBuildClientMintStatusInt = Module["_kVersionStampBuildClientMintStatusInt"] = (wasmExports["kVersionStampBuildClientMintStatusInt"].value) >>> 0;
-  _kVersionStampBuildTimestampInt = Module["_kVersionStampBuildTimestampInt"] = (wasmExports["kVersionStampBuildTimestampInt"].value) >>> 0;
-  _kVersionStampVerifiableInt = Module["_kVersionStampVerifiableInt"] = (wasmExports["kVersionStampVerifiableInt"].value) >>> 0;
-  _kVersionStampBuildCoverageEnabledInt = Module["_kVersionStampBuildCoverageEnabledInt"] = (wasmExports["kVersionStampBuildCoverageEnabledInt"].value) >>> 0;
-  _kVersionStampBuildBaselineChangelistInt = Module["_kVersionStampBuildBaselineChangelistInt"] = (wasmExports["kVersionStampBuildBaselineChangelistInt"].value) >>> 0;
-  _kVersionStampPrecookedTimestampStr = Module["_kVersionStampPrecookedTimestampStr"] = (wasmExports["kVersionStampPrecookedTimestampStr"].value) >>> 0;
-  _kVersionStampPrecookedClientInfoStr = Module["_kVersionStampPrecookedClientInfoStr"] = (wasmExports["kVersionStampPrecookedClientInfoStr"].value) >>> 0;
-  __indirect_function_table = wasmTable = wasmExports["__indirect_function_table"];
-  _kVersionStampBuildHasHardeningProtobuf = Module["_kVersionStampBuildHasHardeningProtobuf"] = (wasmExports["kVersionStampBuildHasHardeningProtobuf"].value) >>> 0;
+  _configureAudio = Module["_configureAudio"] = wasmExports["Ub"];
+  _addAudioToInputStream = Module["_addAudioToInputStream"] = wasmExports["Wb"];
+  _free = Module["_free"] = wasmExports["Xb"];
+  _malloc = Module["_malloc"] = wasmExports["Yb"];
+  _mediapipeLoggerGetEncodedApiKey = Module["_mediapipeLoggerGetEncodedApiKey"] = wasmExports["Zb"];
+  _registerModelResourcesGraphService = Module["_registerModelResourcesGraphService"] = wasmExports["_b"];
+  _bindTextureToStream = Module["_bindTextureToStream"] = wasmExports["$b"];
+  _addBoundTextureToStream = Module["_addBoundTextureToStream"] = wasmExports["ac"];
+  _addDoubleToInputStream = Module["_addDoubleToInputStream"] = wasmExports["bc"];
+  _addFloatToInputStream = Module["_addFloatToInputStream"] = wasmExports["cc"];
+  _addBoolToInputStream = Module["_addBoolToInputStream"] = wasmExports["dc"];
+  _addIntToInputStream = Module["_addIntToInputStream"] = wasmExports["ec"];
+  _addUintToInputStream = Module["_addUintToInputStream"] = wasmExports["fc"];
+  _addStringToInputStream = Module["_addStringToInputStream"] = wasmExports["gc"];
+  _addRawDataSpanToInputStream = Module["_addRawDataSpanToInputStream"] = wasmExports["hc"];
+  _allocateBoolVector = Module["_allocateBoolVector"] = wasmExports["ic"];
+  _allocateFloatVector = Module["_allocateFloatVector"] = wasmExports["jc"];
+  _allocateDoubleVector = Module["_allocateDoubleVector"] = wasmExports["kc"];
+  _allocateIntVector = Module["_allocateIntVector"] = wasmExports["lc"];
+  _allocateUintVector = Module["_allocateUintVector"] = wasmExports["mc"];
+  _allocateStringVector = Module["_allocateStringVector"] = wasmExports["nc"];
+  _addBoolVectorEntry = Module["_addBoolVectorEntry"] = wasmExports["oc"];
+  _addFloatVectorEntry = Module["_addFloatVectorEntry"] = wasmExports["pc"];
+  _addDoubleVectorEntry = Module["_addDoubleVectorEntry"] = wasmExports["qc"];
+  _addIntVectorEntry = Module["_addIntVectorEntry"] = wasmExports["rc"];
+  _addUintVectorEntry = Module["_addUintVectorEntry"] = wasmExports["sc"];
+  _addStringVectorEntry = Module["_addStringVectorEntry"] = wasmExports["tc"];
+  _addBoolVectorToInputStream = Module["_addBoolVectorToInputStream"] = wasmExports["uc"];
+  _addFloatVectorToInputStream = Module["_addFloatVectorToInputStream"] = wasmExports["vc"];
+  _addDoubleVectorToInputStream = Module["_addDoubleVectorToInputStream"] = wasmExports["wc"];
+  _addIntVectorToInputStream = Module["_addIntVectorToInputStream"] = wasmExports["xc"];
+  _addUintVectorToInputStream = Module["_addUintVectorToInputStream"] = wasmExports["yc"];
+  _addStringVectorToInputStream = Module["_addStringVectorToInputStream"] = wasmExports["zc"];
+  _addFlatHashMapToInputStream = Module["_addFlatHashMapToInputStream"] = wasmExports["Ac"];
+  _addProtoToInputStream = Module["_addProtoToInputStream"] = wasmExports["Bc"];
+  _addEmptyPacketToInputStream = Module["_addEmptyPacketToInputStream"] = wasmExports["Cc"];
+  _addBoolToInputSidePacket = Module["_addBoolToInputSidePacket"] = wasmExports["Dc"];
+  _addDoubleToInputSidePacket = Module["_addDoubleToInputSidePacket"] = wasmExports["Ec"];
+  _addFloatToInputSidePacket = Module["_addFloatToInputSidePacket"] = wasmExports["Fc"];
+  _addIntToInputSidePacket = Module["_addIntToInputSidePacket"] = wasmExports["Gc"];
+  _addUintToInputSidePacket = Module["_addUintToInputSidePacket"] = wasmExports["Hc"];
+  _addStringToInputSidePacket = Module["_addStringToInputSidePacket"] = wasmExports["Ic"];
+  _addRawDataSpanToInputSidePacket = Module["_addRawDataSpanToInputSidePacket"] = wasmExports["Jc"];
+  _addProtoToInputSidePacket = Module["_addProtoToInputSidePacket"] = wasmExports["Kc"];
+  _addBoolVectorToInputSidePacket = Module["_addBoolVectorToInputSidePacket"] = wasmExports["Lc"];
+  _addDoubleVectorToInputSidePacket = Module["_addDoubleVectorToInputSidePacket"] = wasmExports["Mc"];
+  _addFloatVectorToInputSidePacket = Module["_addFloatVectorToInputSidePacket"] = wasmExports["Nc"];
+  _addIntVectorToInputSidePacket = Module["_addIntVectorToInputSidePacket"] = wasmExports["Oc"];
+  _addUintVectorToInputSidePacket = Module["_addUintVectorToInputSidePacket"] = wasmExports["Pc"];
+  _addStringVectorToInputSidePacket = Module["_addStringVectorToInputSidePacket"] = wasmExports["Qc"];
+  _attachBoolListener = Module["_attachBoolListener"] = wasmExports["Rc"];
+  _attachBoolVectorListener = Module["_attachBoolVectorListener"] = wasmExports["Sc"];
+  _attachDoubleListener = Module["_attachDoubleListener"] = wasmExports["Tc"];
+  _attachDoubleVectorListener = Module["_attachDoubleVectorListener"] = wasmExports["Uc"];
+  _attachFloatListener = Module["_attachFloatListener"] = wasmExports["Vc"];
+  _attachFloatVectorListener = Module["_attachFloatVectorListener"] = wasmExports["Wc"];
+  _attachIntListener = Module["_attachIntListener"] = wasmExports["Xc"];
+  _attachIntVectorListener = Module["_attachIntVectorListener"] = wasmExports["Yc"];
+  _attachUintListener = Module["_attachUintListener"] = wasmExports["Zc"];
+  _attachUintVectorListener = Module["_attachUintVectorListener"] = wasmExports["_c"];
+  _attachStringListener = Module["_attachStringListener"] = wasmExports["$c"];
+  _attachStringVectorListener = Module["_attachStringVectorListener"] = wasmExports["ad"];
+  _attachProtoListener = Module["_attachProtoListener"] = wasmExports["bd"];
+  _attachProtoVectorListener = Module["_attachProtoVectorListener"] = wasmExports["cd"];
+  _getGraphConfig = Module["_getGraphConfig"] = wasmExports["dd"];
+  _emwgpuCreateBindGroup = wasmExports["ed"];
+  _emwgpuCreateBindGroupLayout = wasmExports["fd"];
+  _emwgpuCreateCommandBuffer = wasmExports["gd"];
+  _emwgpuCreateCommandEncoder = wasmExports["hd"];
+  _emwgpuCreateComputePassEncoder = wasmExports["id"];
+  _emwgpuCreateComputePipeline = wasmExports["jd"];
+  _emwgpuCreateExternalTexture = wasmExports["kd"];
+  _emwgpuCreatePipelineLayout = wasmExports["ld"];
+  _emwgpuCreateQuerySet = wasmExports["md"];
+  _emwgpuCreateRenderBundle = wasmExports["nd"];
+  _emwgpuCreateRenderBundleEncoder = wasmExports["od"];
+  _emwgpuCreateRenderPassEncoder = wasmExports["pd"];
+  _emwgpuCreateRenderPipeline = wasmExports["qd"];
+  _emwgpuCreateSampler = wasmExports["rd"];
+  _emwgpuCreateSurface = wasmExports["sd"];
+  _emwgpuCreateTexture = wasmExports["td"];
+  _emwgpuCreateTextureView = wasmExports["ud"];
+  _emwgpuCreateAdapter = wasmExports["vd"];
+  _emwgpuImportBuffer = wasmExports["wd"];
+  _emwgpuCreateDevice = wasmExports["xd"];
+  _emwgpuCreateQueue = wasmExports["yd"];
+  _emwgpuCreateShaderModule = wasmExports["zd"];
+  _clearSubgraphs = Module["_clearSubgraphs"] = wasmExports["Ad"];
+  _pushBinarySubgraph = Module["_pushBinarySubgraph"] = wasmExports["Bd"];
+  _pushTextSubgraph = Module["_pushTextSubgraph"] = wasmExports["Cd"];
+  _changeBinaryGraph = Module["_changeBinaryGraph"] = wasmExports["Dd"];
+  _changeTextGraph = Module["_changeTextGraph"] = wasmExports["Ed"];
+  _processGl = Module["_processGl"] = wasmExports["Fd"];
+  _process = Module["_process"] = wasmExports["Gd"];
+  _bindTextureToCanvas = Module["_bindTextureToCanvas"] = wasmExports["Hd"];
+  _requestShaderRefreshOnGraphChange = Module["_requestShaderRefreshOnGraphChange"] = wasmExports["Id"];
+  _waitUntilIdle = Module["_waitUntilIdle"] = wasmExports["Jd"];
+  _closeGraph = Module["_closeGraph"] = wasmExports["Kd"];
+  _setAutoRenderToScreen = Module["_setAutoRenderToScreen"] = wasmExports["Ld"];
+  _emscripten_builtin_memalign = wasmExports["Nd"];
+  __emscripten_tempret_set = wasmExports["Od"];
+  __emscripten_stack_restore = wasmExports["Pd"];
+  __emscripten_stack_alloc = wasmExports["Qd"];
+  _emscripten_stack_get_current = wasmExports["Rd"];
+  dynCall_ji = wasmExports["dynCall_ji"];
+  dynCall_jii = wasmExports["dynCall_jii"];
+  dynCall_iiiijij = wasmExports["dynCall_iiiijij"];
+  dynCall_viji = wasmExports["dynCall_viji"];
+  dynCall_iiiji = wasmExports["dynCall_iiiji"];
+  dynCall_jjj = wasmExports["dynCall_jjj"];
+  dynCall_iiiijj = wasmExports["dynCall_iiiijj"];
+  dynCall_viijj = wasmExports["dynCall_viijj"];
+  dynCall_viiijjj = wasmExports["dynCall_viiijjj"];
+  dynCall_vij = wasmExports["dynCall_vij"];
+  dynCall_viijii = wasmExports["dynCall_viijii"];
+  dynCall_vijjj = wasmExports["dynCall_vijjj"];
+  dynCall_vj = wasmExports["dynCall_vj"];
+  dynCall_viij = wasmExports["dynCall_viij"];
+  dynCall_jiji = wasmExports["dynCall_jiji"];
+  dynCall_iiiiij = wasmExports["dynCall_iiiiij"];
+  dynCall_iiiiijj = wasmExports["dynCall_iiiiijj"];
+  dynCall_iiiiiijj = wasmExports["dynCall_iiiiiijj"];
+  memory = wasmMemory = wasmExports["ib"];
+  _kVersionStampBuildChangelistStr = Module["_kVersionStampBuildChangelistStr"] = wasmExports["kb"].value;
+  _kVersionStampCitcSnapshotStr = Module["_kVersionStampCitcSnapshotStr"] = wasmExports["lb"].value;
+  _kVersionStampCitcWorkspaceIdStr = Module["_kVersionStampCitcWorkspaceIdStr"] = wasmExports["mb"].value;
+  _kVersionStampSourceUriStr = Module["_kVersionStampSourceUriStr"] = wasmExports["nb"].value;
+  _kVersionStampBuildClientStr = Module["_kVersionStampBuildClientStr"] = wasmExports["ob"].value;
+  _kVersionStampBuildClientMintStatusStr = Module["_kVersionStampBuildClientMintStatusStr"] = wasmExports["pb"].value;
+  _kVersionStampBuildCompilerStr = Module["_kVersionStampBuildCompilerStr"] = wasmExports["qb"].value;
+  _kVersionStampBuildDateTimePstStr = Module["_kVersionStampBuildDateTimePstStr"] = wasmExports["rb"].value;
+  _kVersionStampBuildDepotPathStr = Module["_kVersionStampBuildDepotPathStr"] = wasmExports["sb"].value;
+  _kVersionStampBuildIdStr = Module["_kVersionStampBuildIdStr"] = wasmExports["tb"].value;
+  _kVersionStampBuildInfoStr = Module["_kVersionStampBuildInfoStr"] = wasmExports["ub"].value;
+  _kVersionStampBuildLabelStr = Module["_kVersionStampBuildLabelStr"] = wasmExports["vb"].value;
+  _kVersionStampBuildTargetStr = Module["_kVersionStampBuildTargetStr"] = wasmExports["wb"].value;
+  _kVersionStampBuildTimestampStr = Module["_kVersionStampBuildTimestampStr"] = wasmExports["xb"].value;
+  _kVersionStampBuildToolStr = Module["_kVersionStampBuildToolStr"] = wasmExports["yb"].value;
+  _kVersionStampG3BuildTargetStr = Module["_kVersionStampG3BuildTargetStr"] = wasmExports["zb"].value;
+  _kVersionStampVerifiableStr = Module["_kVersionStampVerifiableStr"] = wasmExports["Ab"].value;
+  _kVersionStampBuildFdoTypeStr = Module["_kVersionStampBuildFdoTypeStr"] = wasmExports["Bb"].value;
+  _kVersionStampBuildBaselineChangelistStr = Module["_kVersionStampBuildBaselineChangelistStr"] = wasmExports["Cb"].value;
+  _kVersionStampBuildLtoTypeStr = Module["_kVersionStampBuildLtoTypeStr"] = wasmExports["Db"].value;
+  _kVersionStampBuildPropellerTypeStr = Module["_kVersionStampBuildPropellerTypeStr"] = wasmExports["Eb"].value;
+  _kVersionStampBuildPghoTypeStr = Module["_kVersionStampBuildPghoTypeStr"] = wasmExports["Fb"].value;
+  _kVersionStampBuildFdoProfileChangelistStr = Module["_kVersionStampBuildFdoProfileChangelistStr"] = wasmExports["Gb"].value;
+  _kVersionStampBuildMemprofProfileChangelistStr = Module["_kVersionStampBuildMemprofProfileChangelistStr"] = wasmExports["Hb"].value;
+  _kVersionStampBuildUsernameStr = Module["_kVersionStampBuildUsernameStr"] = wasmExports["Ib"].value;
+  _kVersionStampBuildHostnameStr = Module["_kVersionStampBuildHostnameStr"] = wasmExports["Jb"].value;
+  _kVersionStampBuildDirectoryStr = Module["_kVersionStampBuildDirectoryStr"] = wasmExports["Kb"].value;
+  _kVersionStampBuildChangelistInt = Module["_kVersionStampBuildChangelistInt"] = wasmExports["Lb"].value;
+  _kVersionStampCitcSnapshotInt = Module["_kVersionStampCitcSnapshotInt"] = wasmExports["Mb"].value;
+  _kVersionStampBuildClientMintStatusInt = Module["_kVersionStampBuildClientMintStatusInt"] = wasmExports["Nb"].value;
+  _kVersionStampBuildTimestampInt = Module["_kVersionStampBuildTimestampInt"] = wasmExports["Ob"].value;
+  _kVersionStampVerifiableInt = Module["_kVersionStampVerifiableInt"] = wasmExports["Pb"].value;
+  _kVersionStampBuildCoverageEnabledInt = Module["_kVersionStampBuildCoverageEnabledInt"] = wasmExports["Qb"].value;
+  _kVersionStampBuildBaselineChangelistInt = Module["_kVersionStampBuildBaselineChangelistInt"] = wasmExports["Rb"].value;
+  _kVersionStampPrecookedTimestampStr = Module["_kVersionStampPrecookedTimestampStr"] = wasmExports["Sb"].value;
+  _kVersionStampPrecookedClientInfoStr = Module["_kVersionStampPrecookedClientInfoStr"] = wasmExports["Tb"].value;
+  __indirect_function_table = wasmTable = wasmExports["Vb"];
+  _kVersionStampBuildHasHardeningProtobuf = Module["_kVersionStampBuildHasHardeningProtobuf"] = wasmExports["Md"].value;
 }
 
 var wasmImports = {
-  /** @export */ AudioTranscriberThrowJsError,
-  /** @export */ JsGetDeviceMaxSubgroupSize,
-  /** @export */ JsGetDeviceMinSubgroupSize,
-  /** @export */ JsOnEmptyPacketListener,
-  /** @export */ JsOnSimpleListenerBinaryArray,
-  /** @export */ JsOnSimpleListenerBool,
-  /** @export */ JsOnSimpleListenerDouble,
-  /** @export */ JsOnSimpleListenerFloat,
-  /** @export */ JsOnSimpleListenerInt,
-  /** @export */ JsOnSimpleListenerString,
-  /** @export */ JsOnSimpleListenerUint,
-  /** @export */ JsOnVectorFinishedListener,
-  /** @export */ JsOnVectorListenerBool,
-  /** @export */ JsOnVectorListenerDouble,
-  /** @export */ JsOnVectorListenerFloat,
-  /** @export */ JsOnVectorListenerInt,
-  /** @export */ JsOnVectorListenerProto,
-  /** @export */ JsOnVectorListenerString,
-  /** @export */ JsOnVectorListenerUint,
-  /** @export */ JsWrapErrorListenerInternal,
-  /** @export */ JsWrapLoggingHelpers,
-  /** @export */ JsWrapSimpleListeners,
-  /** @export */ TextToSpeechThrowJsError,
-  /** @export */ UseBottomLeftGpuOrigin,
-  /** @export */ _Unwind_RaiseException: __Unwind_RaiseException,
-  /** @export */ __asyncjs__ReadBufferDataJs,
-  /** @export */ __asyncjs__mediapipe_map_buffer_jspi,
-  /** @export */ __syscall_dup: ___syscall_dup,
-  /** @export */ __syscall_faccessat: ___syscall_faccessat,
-  /** @export */ __syscall_fcntl64: ___syscall_fcntl64,
-  /** @export */ __syscall_fstat64: ___syscall_fstat64,
-  /** @export */ __syscall_ftruncate64: ___syscall_ftruncate64,
-  /** @export */ __syscall_getcwd: ___syscall_getcwd,
-  /** @export */ __syscall_getdents64: ___syscall_getdents64,
-  /** @export */ __syscall_getuid32: ___syscall_getuid32,
-  /** @export */ __syscall_ioctl: ___syscall_ioctl,
-  /** @export */ __syscall_lstat64: ___syscall_lstat64,
-  /** @export */ __syscall_mkdirat: ___syscall_mkdirat,
-  /** @export */ __syscall_newfstatat: ___syscall_newfstatat,
-  /** @export */ __syscall_openat: ___syscall_openat,
-  /** @export */ __syscall_readlinkat: ___syscall_readlinkat,
-  /** @export */ __syscall_renameat: ___syscall_renameat,
-  /** @export */ __syscall_rmdir: ___syscall_rmdir,
-  /** @export */ __syscall_stat64: ___syscall_stat64,
-  /** @export */ __syscall_unlinkat: ___syscall_unlinkat,
-  /** @export */ __syscall_utimensat: ___syscall_utimensat,
-  /** @export */ _abort_js: __abort_js,
-  /** @export */ _embind_register_bigint: __embind_register_bigint,
-  /** @export */ _embind_register_bool: __embind_register_bool,
-  /** @export */ _embind_register_emval: __embind_register_emval,
-  /** @export */ _embind_register_float: __embind_register_float,
-  /** @export */ _embind_register_function: __embind_register_function,
-  /** @export */ _embind_register_integer: __embind_register_integer,
-  /** @export */ _embind_register_memory_view: __embind_register_memory_view,
-  /** @export */ _embind_register_std_string: __embind_register_std_string,
-  /** @export */ _embind_register_std_wstring: __embind_register_std_wstring,
-  /** @export */ _embind_register_void: __embind_register_void,
-  /** @export */ _emval_create_invoker: __emval_create_invoker,
-  /** @export */ _emval_decref: __emval_decref,
-  /** @export */ _emval_get_global: __emval_get_global,
-  /** @export */ _emval_get_property: __emval_get_property,
-  /** @export */ _emval_incref: __emval_incref,
-  /** @export */ _emval_instanceof: __emval_instanceof,
-  /** @export */ _emval_invoke: __emval_invoke,
-  /** @export */ _emval_new_array: __emval_new_array,
-  /** @export */ _emval_new_cstring: __emval_new_cstring,
-  /** @export */ _emval_new_object: __emval_new_object,
-  /** @export */ _emval_run_destructors: __emval_run_destructors,
-  /** @export */ _emval_set_property: __emval_set_property,
-  /** @export */ _gmtime_js: __gmtime_js,
-  /** @export */ _localtime_js: __localtime_js,
-  /** @export */ _mktime_js: __mktime_js,
-  /** @export */ _mmap_js: __mmap_js,
-  /** @export */ _munmap_js: __munmap_js,
-  /** @export */ _tzset_js: __tzset_js,
-  /** @export */ clock_time_get: _clock_time_get,
-  /** @export */ custom_emscripten_dbgn,
-  /** @export */ emscripten_asm_const_int: _emscripten_asm_const_int,
-  /** @export */ emscripten_errn: _emscripten_errn,
-  /** @export */ emscripten_get_heap_max: _emscripten_get_heap_max,
-  /** @export */ emscripten_get_now: _emscripten_get_now,
-  /** @export */ emscripten_has_asyncify: _emscripten_has_asyncify,
-  /** @export */ emscripten_outn: _emscripten_outn,
-  /** @export */ emscripten_pc_get_function: _emscripten_pc_get_function,
-  /** @export */ emscripten_resize_heap: _emscripten_resize_heap,
-  /** @export */ emscripten_sleep: _emscripten_sleep,
-  /** @export */ emscripten_stack_snapshot: _emscripten_stack_snapshot,
-  /** @export */ emscripten_stack_unwind_buffer: _emscripten_stack_unwind_buffer,
-  /** @export */ emscripten_webgl_create_context: _emscripten_webgl_create_context,
-  /** @export */ emscripten_webgl_destroy_context: _emscripten_webgl_destroy_context,
-  /** @export */ emscripten_webgl_get_context_attributes: _emscripten_webgl_get_context_attributes,
-  /** @export */ emscripten_webgl_get_current_context: _emscripten_webgl_get_current_context,
-  /** @export */ emscripten_webgl_make_context_current: _emscripten_webgl_make_context_current,
-  /** @export */ emscripten_webgpu_get_device: _emscripten_webgpu_get_device,
-  /** @export */ emwgpuBufferDestroy: _emwgpuBufferDestroy,
-  /** @export */ emwgpuBufferGetConstMappedRange: _emwgpuBufferGetConstMappedRange,
-  /** @export */ emwgpuBufferGetMappedRange: _emwgpuBufferGetMappedRange,
-  /** @export */ emwgpuBufferMapAsync: _emwgpuBufferMapAsync,
-  /** @export */ emwgpuBufferUnmap: _emwgpuBufferUnmap,
-  /** @export */ emwgpuBufferWriteMappedRange: _emwgpuBufferWriteMappedRange,
-  /** @export */ emwgpuDelete: _emwgpuDelete,
-  /** @export */ emwgpuDeviceCreateBuffer: _emwgpuDeviceCreateBuffer,
-  /** @export */ emwgpuDeviceCreateComputePipelineAsync: _emwgpuDeviceCreateComputePipelineAsync,
-  /** @export */ emwgpuDeviceCreateShaderModule: _emwgpuDeviceCreateShaderModule,
-  /** @export */ emwgpuDeviceDestroy: _emwgpuDeviceDestroy,
-  /** @export */ emwgpuQueueOnSubmittedWorkDone: _emwgpuQueueOnSubmittedWorkDone,
-  /** @export */ emwgpuWaitAny: _emwgpuWaitAny,
-  /** @export */ environ_get: _environ_get,
-  /** @export */ environ_sizes_get: _environ_sizes_get,
-  /** @export */ exit: _exit,
-  /** @export */ fd_close: _fd_close,
-  /** @export */ fd_pread: _fd_pread,
-  /** @export */ fd_read: _fd_read,
-  /** @export */ fd_seek: _fd_seek,
-  /** @export */ fd_write: _fd_write,
-  /** @export */ glActiveTexture: _glActiveTexture,
-  /** @export */ glAttachShader: _glAttachShader,
-  /** @export */ glBindAttribLocation: _glBindAttribLocation,
-  /** @export */ glBindBuffer: _glBindBuffer,
-  /** @export */ glBindFramebuffer: _glBindFramebuffer,
-  /** @export */ glBindTexture: _glBindTexture,
-  /** @export */ glBufferData: _glBufferData,
-  /** @export */ glClientWaitSync: _glClientWaitSync,
-  /** @export */ glCompileShader: _glCompileShader,
-  /** @export */ glCreateProgram: _glCreateProgram,
-  /** @export */ glCreateShader: _glCreateShader,
-  /** @export */ glDeleteFramebuffers: _glDeleteFramebuffers,
-  /** @export */ glDeleteProgram: _glDeleteProgram,
-  /** @export */ glDeleteShader: _glDeleteShader,
-  /** @export */ glDeleteSync: _glDeleteSync,
-  /** @export */ glDeleteTextures: _glDeleteTextures,
-  /** @export */ glDetachShader: _glDetachShader,
-  /** @export */ glDisableVertexAttribArray: _glDisableVertexAttribArray,
-  /** @export */ glDrawArrays: _glDrawArrays,
-  /** @export */ glEnableVertexAttribArray: _glEnableVertexAttribArray,
-  /** @export */ glFenceSync: _glFenceSync,
-  /** @export */ glFinish: _glFinish,
-  /** @export */ glFramebufferTexture2D: _glFramebufferTexture2D,
-  /** @export */ glGenBuffers: _glGenBuffers,
-  /** @export */ glGenFramebuffers: _glGenFramebuffers,
-  /** @export */ glGenTextures: _glGenTextures,
-  /** @export */ glGetError: _glGetError,
-  /** @export */ glGetIntegerv: _glGetIntegerv,
-  /** @export */ glGetString: _glGetString,
-  /** @export */ glGetUniformLocation: _glGetUniformLocation,
-  /** @export */ glLinkProgram: _glLinkProgram,
-  /** @export */ glPixelStorei: _glPixelStorei,
-  /** @export */ glReadPixels: _glReadPixels,
-  /** @export */ glShaderSource: _glShaderSource,
-  /** @export */ glTexImage2D: _glTexImage2D,
-  /** @export */ glTexParameteri: _glTexParameteri,
-  /** @export */ glTexStorage2D: _glTexStorage2D,
-  /** @export */ glTexSubImage2D: _glTexSubImage2D,
-  /** @export */ glUniform1i: _glUniform1i,
-  /** @export */ glUseProgram: _glUseProgram,
-  /** @export */ glVertexAttribPointer: _glVertexAttribPointer,
-  /** @export */ glViewport: _glViewport,
-  /** @export */ proc_exit: _proc_exit,
-  /** @export */ random_get: _random_get,
-  /** @export */ wgpuBufferGetSize: _wgpuBufferGetSize,
-  /** @export */ wgpuBufferGetUsage: _wgpuBufferGetUsage,
-  /** @export */ wgpuCommandEncoderBeginComputePass: _wgpuCommandEncoderBeginComputePass,
-  /** @export */ wgpuCommandEncoderClearBuffer: _wgpuCommandEncoderClearBuffer,
-  /** @export */ wgpuCommandEncoderCopyBufferToBuffer: _wgpuCommandEncoderCopyBufferToBuffer,
-  /** @export */ wgpuCommandEncoderCopyBufferToTexture: _wgpuCommandEncoderCopyBufferToTexture,
-  /** @export */ wgpuCommandEncoderCopyTextureToBuffer: _wgpuCommandEncoderCopyTextureToBuffer,
-  /** @export */ wgpuCommandEncoderCopyTextureToTexture: _wgpuCommandEncoderCopyTextureToTexture,
-  /** @export */ wgpuCommandEncoderFinish: _wgpuCommandEncoderFinish,
-  /** @export */ wgpuCommandEncoderResolveQuerySet: _wgpuCommandEncoderResolveQuerySet,
-  /** @export */ wgpuComputePassEncoderDispatchWorkgroups: _wgpuComputePassEncoderDispatchWorkgroups,
-  /** @export */ wgpuComputePassEncoderEnd: _wgpuComputePassEncoderEnd,
-  /** @export */ wgpuComputePassEncoderSetBindGroup: _wgpuComputePassEncoderSetBindGroup,
-  /** @export */ wgpuComputePassEncoderSetPipeline: _wgpuComputePassEncoderSetPipeline,
-  /** @export */ wgpuDeviceCreateBindGroup: _wgpuDeviceCreateBindGroup,
-  /** @export */ wgpuDeviceCreateBindGroupLayout: _wgpuDeviceCreateBindGroupLayout,
-  /** @export */ wgpuDeviceCreateCommandEncoder: _wgpuDeviceCreateCommandEncoder,
-  /** @export */ wgpuDeviceCreateComputePipeline: _wgpuDeviceCreateComputePipeline,
-  /** @export */ wgpuDeviceCreatePipelineLayout: _wgpuDeviceCreatePipelineLayout,
-  /** @export */ wgpuDeviceCreateQuerySet: _wgpuDeviceCreateQuerySet,
-  /** @export */ wgpuDeviceCreateTexture: _wgpuDeviceCreateTexture,
-  /** @export */ wgpuDeviceGetAdapterInfo: _wgpuDeviceGetAdapterInfo,
-  /** @export */ wgpuDeviceGetLimits: _wgpuDeviceGetLimits,
-  /** @export */ wgpuDeviceHasFeature: _wgpuDeviceHasFeature,
-  /** @export */ wgpuQueueSubmit: _wgpuQueueSubmit,
-  /** @export */ wgpuQueueWriteBuffer: _wgpuQueueWriteBuffer,
-  /** @export */ wgpuQueueWriteTexture: _wgpuQueueWriteTexture,
-  /** @export */ wgpuTextureCreateView: _wgpuTextureCreateView,
-  /** @export */ wgpuTextureDestroy: _wgpuTextureDestroy,
-  /** @export */ wgpuTextureGetDepthOrArrayLayers: _wgpuTextureGetDepthOrArrayLayers,
-  /** @export */ wgpuTextureGetFormat: _wgpuTextureGetFormat,
-  /** @export */ wgpuTextureGetHeight: _wgpuTextureGetHeight,
-  /** @export */ wgpuTextureGetWidth: _wgpuTextureGetWidth
+  /** @export */ hb: JsOnEmptyPacketListener,
+  /** @export */ P: JsOnSimpleListenerBinaryArray,
+  /** @export */ gb: JsOnSimpleListenerBool,
+  /** @export */ fb: JsOnSimpleListenerDouble,
+  /** @export */ eb: JsOnSimpleListenerFloat,
+  /** @export */ db: JsOnSimpleListenerInt,
+  /** @export */ cb: JsOnSimpleListenerString,
+  /** @export */ bb: JsOnSimpleListenerUint,
+  /** @export */ g: JsOnVectorFinishedListener,
+  /** @export */ ab: JsOnVectorListenerBool,
+  /** @export */ $a: JsOnVectorListenerDouble,
+  /** @export */ _a: JsOnVectorListenerFloat,
+  /** @export */ Za: JsOnVectorListenerInt,
+  /** @export */ Ya: JsOnVectorListenerProto,
+  /** @export */ Xa: JsOnVectorListenerString,
+  /** @export */ Wa: JsOnVectorListenerUint,
+  /** @export */ Va: JsWrapErrorListenerInternal,
+  /** @export */ Ua: JsWrapLoggingHelpers,
+  /** @export */ a: JsWrapSimpleListeners,
+  /** @export */ O: UseBottomLeftGpuOrigin,
+  /** @export */ W: __asyncjs__mediapipe_map_buffer_jspi,
+  /** @export */ Ta: ___syscall_dup,
+  /** @export */ Sa: ___syscall_faccessat,
+  /** @export */ N: ___syscall_fcntl64,
+  /** @export */ Ra: ___syscall_fstat64,
+  /** @export */ ca: ___syscall_ftruncate64,
+  /** @export */ Qa: ___syscall_ioctl,
+  /** @export */ Pa: ___syscall_lstat64,
+  /** @export */ Oa: ___syscall_newfstatat,
+  /** @export */ M: ___syscall_openat,
+  /** @export */ Na: ___syscall_stat64,
+  /** @export */ Ia: __abort_js,
+  /** @export */ $: __gmtime_js,
+  /** @export */ _: __localtime_js,
+  /** @export */ Z: __mktime_js,
+  /** @export */ Y: __mmap_js,
+  /** @export */ X: __munmap_js,
+  /** @export */ Ha: __tzset_js,
+  /** @export */ ba: _clock_time_get,
+  /** @export */ Ga: custom_emscripten_dbgn,
+  /** @export */ Fa: _emscripten_asm_const_int,
+  /** @export */ u: _emscripten_errn,
+  /** @export */ Ea: _emscripten_get_heap_max,
+  /** @export */ b: _emscripten_get_now,
+  /** @export */ Da: _emscripten_has_asyncify,
+  /** @export */ Ca: _emscripten_outn,
+  /** @export */ Ba: _emscripten_pc_get_function,
+  /** @export */ Aa: _emscripten_resize_heap,
+  /** @export */ K: _emscripten_stack_snapshot,
+  /** @export */ za: _emscripten_stack_unwind_buffer,
+  /** @export */ ya: _emscripten_webgl_create_context,
+  /** @export */ xa: _emscripten_webgl_destroy_context,
+  /** @export */ wa: _emscripten_webgl_get_context_attributes,
+  /** @export */ i: _emscripten_webgl_get_current_context,
+  /** @export */ va: _emscripten_webgl_make_context_current,
+  /** @export */ ua: _emwgpuBufferDestroy,
+  /** @export */ c: _emwgpuDelete,
+  /** @export */ ta: _emwgpuDeviceCreateBuffer,
+  /** @export */ sa: _emwgpuDeviceDestroy,
+  /** @export */ Ma: _environ_get,
+  /** @export */ La: _environ_sizes_get,
+  /** @export */ ra: _exit,
+  /** @export */ w: _fd_close,
+  /** @export */ L: _fd_read,
+  /** @export */ aa: _fd_seek,
+  /** @export */ v: _fd_write,
+  /** @export */ t: _glActiveTexture,
+  /** @export */ J: _glAttachShader,
+  /** @export */ qa: _glBindAttribLocation,
+  /** @export */ f: _glBindBuffer,
+  /** @export */ m: _glBindFramebuffer,
+  /** @export */ e: _glBindTexture,
+  /** @export */ s: _glBufferData,
+  /** @export */ h: _glClientWaitSync,
+  /** @export */ pa: _glCompileShader,
+  /** @export */ oa: _glCreateProgram,
+  /** @export */ na: _glCreateShader,
+  /** @export */ I: _glDeleteFramebuffers,
+  /** @export */ ma: _glDeleteProgram,
+  /** @export */ H: _glDeleteShader,
+  /** @export */ l: _glDeleteSync,
+  /** @export */ G: _glDeleteTextures,
+  /** @export */ F: _glDetachShader,
+  /** @export */ E: _glDisableVertexAttribArray,
+  /** @export */ la: _glDrawArrays,
+  /** @export */ D: _glEnableVertexAttribArray,
+  /** @export */ C: _glFenceSync,
+  /** @export */ k: _glFinish,
+  /** @export */ r: _glFramebufferTexture2D,
+  /** @export */ B: _glGenBuffers,
+  /** @export */ ka: _glGenFramebuffers,
+  /** @export */ q: _glGenTextures,
+  /** @export */ j: _glGetError,
+  /** @export */ A: _glGetIntegerv,
+  /** @export */ p: _glGetString,
+  /** @export */ ja: _glGetUniformLocation,
+  /** @export */ ia: _glLinkProgram,
+  /** @export */ o: _glPixelStorei,
+  /** @export */ z: _glReadPixels,
+  /** @export */ ha: _glShaderSource,
+  /** @export */ ga: _glTexImage2D,
+  /** @export */ d: _glTexParameteri,
+  /** @export */ y: _glTexStorage2D,
+  /** @export */ fa: _glUniform1i,
+  /** @export */ ea: _glUseProgram,
+  /** @export */ x: _glVertexAttribPointer,
+  /** @export */ da: _glViewport,
+  /** @export */ n: hardware_concurrency,
+  /** @export */ Ka: _proc_exit,
+  /** @export */ Ja: _random_get,
+  /** @export */ V: _wgpuCommandEncoderCopyTextureToBuffer,
+  /** @export */ U: _wgpuCommandEncoderFinish,
+  /** @export */ T: _wgpuDeviceCreateCommandEncoder,
+  /** @export */ S: _wgpuQueueSubmit,
+  /** @export */ R: _wgpuTextureDestroy,
+  /** @export */ Q: _wgpuTextureGetFormat
 };
-
-// Argument name here must shadow the `wasmExports` global so
-// that it is recognised by metadce and minify-import-export-names
-// passes.
-function applySignatureConversions(wasmExports) {
-  // First, make a copy of the incoming exports object
-  wasmExports = Object.assign({}, wasmExports);
-  var makeWrapper_pp = f => a0 => f(a0) >>> 0;
-  var makeWrapper_ppp = f => (a0, a1) => f(a0, a1) >>> 0;
-  var makeWrapper_p = f => () => f() >>> 0;
-  wasmExports["malloc"] = makeWrapper_pp(wasmExports["malloc"]);
-  wasmExports["__getTypeName"] = makeWrapper_pp(wasmExports["__getTypeName"]);
-  wasmExports["emscripten_builtin_memalign"] = makeWrapper_ppp(wasmExports["emscripten_builtin_memalign"]);
-  wasmExports["memalign"] = makeWrapper_ppp(wasmExports["memalign"]);
-  wasmExports["_emscripten_stack_alloc"] = makeWrapper_pp(wasmExports["_emscripten_stack_alloc"]);
-  wasmExports["emscripten_stack_get_current"] = makeWrapper_p(wasmExports["emscripten_stack_get_current"]);
-  return wasmExports;
-}
 
 // include: postamble.js
 // === Auto-generated postamble setup entry stuff ===
