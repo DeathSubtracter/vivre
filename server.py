@@ -95,7 +95,7 @@ def validate_spec(o, sentence):
     except (TypeError, ValueError):
         return None
     title = o.get("title") if isinstance(o.get("title"), str) and o["title"].strip() else sentence
-    return {"title": title.strip()[:60], "subjects": subjects, "question": q.strip(), "duration_s": duration,
+    return {"title": title.strip()[:60], "sentence": sentence, "subjects": subjects, "question": q.strip(), "duration_s": duration,
             "conditions": valid_conditions(o.get("conditions"), subjects),
             "uses_sound": o.get("uses_sound") is True, "uses_motion": o.get("uses_motion") is True}
 
