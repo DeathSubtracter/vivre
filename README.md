@@ -87,6 +87,7 @@ One model isn't Meta's: YAMNet, by Google, recognizes everyday sounds in your br
 **Where does your data go?**
 
 - Camera frames go to Meta's API for analysis, and so do a few seconds of sound for speech and sound rules
+- The hosted version runs on Railway and reaches Meta's API through a small Cloudflare relay (`relay/worker.js`). Frames and sound pass through the relay on the way to Meta, and the relay doesn't save them
 - The sound recognizer itself runs in your browser
 - The second-device link shares card states and alerts, never video or sound. Anyone with the link can see those while the session runs
 
