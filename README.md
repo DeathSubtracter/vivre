@@ -76,7 +76,6 @@ Only film people who have agreed. All of the code is public here, so you can che
 - Sound recognition has been tried with real clapping and a baby crying video. Other sounds are untested.
 - A rule won't fire if SAM can't find something a camera rule requires.
 - Motion rules compare two frames a few seconds apart.
-- On iPhone, spoken alerts have been unreliable, so rely on the screen and chime there.
 - Alerts need the page open. Vivre doesn't send phone notifications and isn't connected to any camera system.
 - **The hosted link may not work at times.** Meta's API has repeatedly answered the hosted server with "model not found" for long stretches, while the same calls from a laptop worked. The cause isn't known. Example sound rules still work then. Running Vivre locally avoids this.
 - Live use is capped per session, per visitor and overall, and a session stops after 4 minutes. A restart can reset the overall count.
