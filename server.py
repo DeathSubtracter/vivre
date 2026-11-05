@@ -74,6 +74,7 @@ async def guard(request: Request, call_next):
         if size > MAX_BODY_BYTES:
             return JSONResponse({"detail": "That upload is too large."}, 413)
     r = await call_next(request)
+    if not request.url.path.startswith("/vendor/"): r.headers["Cache-Control"] = "no-cache"  # always check for a newer app
     r.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
                       "Content-Security-Policy": CSP, "Permissions-Policy": "camera=(self), microphone=(self)"})
     return r

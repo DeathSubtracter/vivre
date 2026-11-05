@@ -275,11 +275,13 @@ $("#go").onclick = async () => {
         if (wantsRecognizer) {
           say("Loading the sound recognizer…");
           try {
-            await loadHearing(); hearingOn = true; startListening();
+            try { await loadHearing(); }
+            catch (e) { console.error(e); await new Promise(r => setTimeout(r, 1000)); await loadHearing(); }  // one more try for a dropped download
+            hearingOn = true; startListening();
             for (let i = 0; i < 25 && !roomMic.samples(1); i++) await new Promise(r => setTimeout(r, 100));  // a second of sound first
             say("Watching and listening. Checks run every few seconds.");
           }
-          catch (e) { console.error(e); say("The sound recognizer couldn't load, so sounds other than speech may be missed.", true); }
+          catch (e) { console.error(e); say(`The sound recognizer couldn't load, so sounds other than speech may be missed. Reason: ${String(e?.message || e).slice(0, 160)}`, true); await new Promise(r => setTimeout(r, 6000)); }
         }
       } catch { say("A rule needs sound, but the microphone is off, so it can't fire. Allow the microphone and start again.", true); }
     }
