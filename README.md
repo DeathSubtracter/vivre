@@ -34,6 +34,7 @@ flowchart LR
 - **Plain Python timers** decide when "for 10 seconds" has passed, so timing isn't left to a model.
 - **Muse Wonder** only runs when a rule comes due. It looks at the last few frames, listens if the rule uses sound, and explains the alert in one plain sentence, or rejects it.
 - Still frames skip the model calls to save money.
+- **Alerts reach another device.** While watching, "Get alerts on another device" makes a private link. That device gets the cards, the alert log, a chime and the spoken alert, but never the video or sound.
 
 ## Privacy and limits
 
@@ -43,8 +44,8 @@ flowchart LR
 - It has only been tried on a few simple scenes. Expect false alarms and misses. A SAM miss can also hold back a real alert, because a rule won't fire if SAM can't find what it requires.
 - Motion rules compare two frames a few seconds apart, so quick movements can be missed.
 - Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
-- Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, the app switches to a sample. For now that sample is a hand-written placeholder, and it's labeled as one.
-- The hosted server got "model not found" errors from Meta's API for part of Nov 4, then started working. The cause isn't known, so live watching on the link may occasionally fall back to the sample.
+- Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, live watching stops and the app says why.
+- The hosted server got "model not found" errors from Meta's API for part of Nov 4, then started working. The cause isn't known. The server now retries those calls, but live watching may still occasionally be unavailable.
 
 ## Run it
 

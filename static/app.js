@@ -8,7 +8,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const vid = $("#cam"), cv = document.createElement("canvas"), sm = document.createElement("canvas");
 sm.width = sm.height = 16;
 let audio, wake, stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
-let roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
+let watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
 
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
@@ -141,6 +141,7 @@ async function loop() {
     if (!running) return;
     if (d.sample) { stop(); playSample(d.reason); return; }
     fails = 0;
+    d.new_alerts.forEach(a => { thumbs[a.id] = cv.toDataURL("image/jpeg", 0.5); });
     render(d); showBoxes(d.boxes);
     history.push({ img: cv.toDataURL("image/jpeg", 0.5), d });
     if (history.length > MAX_HISTORY) history.shift();
@@ -179,7 +180,14 @@ function planText(m) {
   if (m.uses_sound) parts.push("Listens with the microphone.");
   return parts.join(" ");
 }
+function clock(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
+function renderLog(log = []) {
+  $("#log").innerHTML = !log.length ? "" : `<h2>Alerts</h2><ol>${[...log].reverse().map(a => `<li>
+    ${thumbs[a.id] ? `<img src="${thumbs[a.id]}" alt="Frame when this alert fired">` : ""}
+    <span><b>${esc(a.title)}</b> at ${clock(a.t)}<br>${esc(a.say)}</span></li>`).join("")}</ol>`;
+}
 function render(d) {
+  if (d.log) renderLog(d.log);
   $("#cards").innerHTML = d.cards.map((c, i) => `<article class="card ${esc(c.status)}">
     <h3>${esc(meta[i].title)}</h3><p class="say">“${esc(meta[i].sentence)}”</p>
     <p class="state">${stateText(c)}</p>
@@ -199,7 +207,7 @@ function stop() {
   wake?.release().catch(() => {}); wake = null;
   roomMic?.stop(); roomMic = null; spoken = null; showBoxes([]);
   document.body.classList.remove("alerting");
-  setMonitor(false); $("#stop").hidden = true;
+  setMonitor(false); $("#stop").hidden = true; $("#share").hidden = true;
   if (!history.length) return;
   $("#rev").hidden = false; $("#rs").max = history.length - 1; $("#rs").value = history.length - 1;
   $("#ri").src = history[history.length - 1].img;
@@ -230,6 +238,7 @@ $("#go").onclick = async () => {
     const d = await res.json();
     if (d.sample) { playSample(d.reason); return; }
     session = d.session; meta = d.cards; history = []; prev = null; fails = 0; running = true;
+    watchToken = d.watch; thumbs = {}; renderLog([]); $("#share").hidden = false; $("#share").textContent = "Get alerts on another device";
     $("#rev").hidden = true; setMonitor(true); $("#stop").hidden = false; keepAwake();
     render({ cards: meta.map(m => ({ status: "ok", held: 0, need: m.need, note: "" })), ledger: d.ledger, t: 0, skipped: 0, stages: d.stages, total: d.total });
     say("Watching. Checks run every few seconds.");
@@ -246,11 +255,12 @@ $("#go").onclick = async () => {
 // Sample kitchen: a recorded run that costs nothing and always works
 function stopSample() { sampleTimers.forEach(clearTimeout); sampleTimers = []; }
 async function playSample(reason) {
-  stopSample(); stopCam(); showBoxes([]);
   try {
     const res = await fetch("sample/kitchen.json");
     if (!res.ok) throw new Error(res.statusText);
     const s = await res.json();
+    if (!s.clip) { say(`${reason} Please try again later.`, true); return; }  // only ever show a real recorded run
+    stopSample(); stopCam(); showBoxes([]);
     meta = s.rules; setMonitor(true); $("#stop").hidden = false; $("#rev").hidden = true; $("#camOn").hidden = true;
     const ph = $("#placeholder");
     if (s.clip) { ph.hidden = true; vid.srcObject = null; vid.src = s.clip; vid.currentTime = 0; vid.play(); }
@@ -262,9 +272,46 @@ async function playSample(reason) {
     }, ev.t * 1000)));
   } catch (e) { say("The sample couldn't load. Try reloading the page.", true); }
 }
-$("#sample").onclick = () => {
-  unlockSound();
-  history = []; playSample();
-};
 
-if (!navigator.mediaDevices) say(cameraHelp(), true);
+// A second device gets the card states and alerts, never the video or sound
+$("#share").onclick = async () => {
+  const url = `${location.origin}/?watch=${watchToken}`;
+  try {
+    if (navigator.share) await navigator.share({ title: "Vivre alerts", url });
+    else { await navigator.clipboard.writeText(url); $("#share").textContent = "Link copied. Open it on the other device"; }
+  } catch (e) {
+    if (e.name !== "AbortError") say(`Open this on the other device: ${url}`);
+  }
+};
+async function follow(token) {
+  document.body.classList.add("viewer");
+  const seen = new Set(); let first = true, armed = false;
+  const arm = document.createElement("button");
+  arm.textContent = "Turn on alert sound";
+  arm.onclick = () => { unlockSound(); armed = true; arm.hidden = true; keepAwake(); say("Sound is on. Keep this page open. You'll get the alert here."); };
+  $(".tray").prepend(arm);
+  say("Following a Vivre watch on another device. You'll see alerts here, not the video.");
+  $(".view").prepend($("#status"));
+  const poll = async () => {
+    try {
+      const res = await fetch(`/api/watch/${encodeURIComponent(token)}`);
+      if (res.status === 404) { say("This watch has ended.", true); arm.hidden = true; return; }
+      if (res.ok) {
+        const d = await res.json();
+        meta = d.cards; render({ cards: d.states, log: d.log });
+        d.log.forEach(a => {
+          if (seen.has(a.id)) return;
+          seen.add(a.id);
+          if (!first && armed) { chime(); speak(`${a.title}. ${a.say}`); }
+        });
+        first = false;
+      }
+    } catch { /* a dropped connection just waits for the next poll */ }
+    setTimeout(poll, 3000);
+  };
+  poll();
+}
+
+const watching = new URLSearchParams(location.search).get("watch");
+if (watching) follow(watching);
+else if (!navigator.mediaDevices) say(cameraHelp(), true);

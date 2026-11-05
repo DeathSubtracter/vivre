@@ -268,6 +268,19 @@ class SamDecidesTests(unittest.TestCase):
         self.assertEqual([b["label"] for b in out["boxes"]], ["cup"])
 
 
+class SecondDeviceTests(unittest.TestCase):
+    def test_alerts_reach_the_log_and_the_view_has_no_frames_or_costs(self):
+        S = session(0)
+        with mock.patch.object(meta, "check_frame", return_value=yes(True)), mock.patch.object(server, "start_sam"), \
+             mock.patch.object(meta, "confirm", return_value={"confirm": True, "explanation": "Why"}):
+            out = server.run_check(S, b"j", 1, 3)
+        self.assertEqual(out["new_alerts"][0]["id"], 1)
+        view = server.watch_view(S)
+        self.assertEqual(view["log"][0]["say"], "Why")
+        self.assertEqual(set(view), {"cards", "states", "log"})
+        self.assertNotIn("j", str(view["cards"]))
+
+
 class SoundTests(unittest.TestCase):
     def test_sound_rule_gets_the_clip_and_is_never_skipped_as_still(self):
         S = session()

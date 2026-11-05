@@ -12,7 +12,7 @@
 <main>
   <header>
     <h1>Vivre</h1>
-    <p class="tag">Tell it what to look for, in a sentence, and it keeps watch over the things you care about.</p>
+    <p class="tag">Most accidents aren't surprises, they're unwatched. Tell Vivre what to look for, in a sentence, and it keeps watch.</p>
   </header>
   <div class="layout">
     <section class="view">
@@ -24,20 +24,20 @@
       </div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
       <button id="stop" hidden>Stop watching</button>
+      <button id="share" class="quiet" hidden>Get alerts on another device</button>
     </section>
     <section id="setup" class="setup">
       <label for="rules">What should it watch for? One sentence per line, up to 3.</label>
       <textarea id="rules" rows="3" maxlength="620" placeholder="Tell me if nobody is at the desk for 10 seconds"></textarea>
       <button id="talk" type="button" class="quiet">Say a rule</button>
       <div class="chips" aria-label="Example rules">
+        <button type="button" class="chip">Tell me if the stove is on with a pot and nobody has been in the kitchen for 10 seconds</button>
         <button type="button" class="chip">Tell me if nobody is at the desk for 10 seconds</button>
-        <button type="button" class="chip">Tell me if someone holds up a hand</button>
         <button type="button" class="chip">Tell me if a cup is left on the table for 10 seconds</button>
         <button type="button" class="chip">Tell me if you hear clapping</button>
       </div>
       <label class="consent"><input id="consent" type="checkbox"> I'm only filming people who agreed.</label>
       <button id="go">Start watching</button>
-      <button id="sample" class="quiet">See the sample kitchen</button>
       <p class="fine"><strong>A prototype, not a safety device.</strong> It complements smoke alarms and medical-alert gear. It checks every few seconds and can miss things.</p>
       <p class="fine">Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never saves them. The microphone only turns on for spoken rules and rules about sounds, and those few seconds of sound are treated the same way.</p>
       <details class="more">
@@ -56,6 +56,7 @@
     </section>
     <section class="tray">
       <div id="cards" class="cards"></div>
+      <div id="log"></div>
       <div id="strip"></div>
       <div id="ledger"></div>
     </section>

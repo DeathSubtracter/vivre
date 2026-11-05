@@ -132,7 +132,7 @@ def friendly(e):
 
 
 def sample_reply(reason):
-    return {"sample": True, "reason": f"{reason} Here's the sample instead."}
+    return {"sample": True, "reason": reason}
 
 
 class Start(BaseModel):
@@ -186,11 +186,11 @@ def start(body: Start, request: Request):
          "t0": now, "seen": now, "last": None, "last_call": 0, "last_tick": 0, "n": 0, "led": led, "ip": ip,
          "frames": deque(maxlen=3), "counts": {}, "seen_at": {}, "boxes": {}, "audio": None,
          "sam_pending": 0, "sam_ok": None, "sam_ms": None,
-         "lock": threading.Lock(), "busy": threading.Lock(), "out": None,
+         "lock": threading.Lock(), "busy": threading.Lock(), "out": None, "log": [], "watch": uuid.uuid4().hex,
          "cards": [{"status": "ok", "held": 0, "need": s["duration_s"], "note": ""} for s in specs],
          "stages": {"understand": {"model": meta.COMPILER, "state": "ok", "ms": ms}}}
     with sessions_lock: sessions[sid] = S
-    return {"session": sid, "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
+    return {"session": sid, "watch": S["watch"], "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
                                        "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"]}
                                       for s, r in zip(specs, rules)],
             "ledger": led.report(), "total": round(led.total, 4), "stages": S["stages"]}
@@ -271,7 +271,8 @@ def run_check(S, jpg, diff, now):
                 if v["confirm"]:
                     timer.confirmed()
                     S["expl"][i], state = v["explanation"], "alert"
-                    new.append({"i": i, "title": s["title"], "say": v["explanation"]})
+                    alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": v["explanation"], "t": t}
+                    S["log"].append(alert); new.append(alert)
                 else:
                     timer.rejected(t)
                     state, held, note = "ok", 0.0, f"Double-checked, not confirmed. {v['explanation']}"
@@ -279,7 +280,7 @@ def run_check(S, jpg, diff, now):
             cards.append({"status": "watch" if state == "due" else state, "held": held, "need": timer.need, "note": note})
         S["cards"] = cards
     return {"t": t, "cards": S["cards"], "new_alerts": new, "reused": reused, "skipped": led.skipped, "problem": problem,
-            "stages": stages, "boxes": boxes, "ledger": led.report(), "total": round(led.total, 4)}
+            "stages": stages, "boxes": boxes, "log": S.get("log", []), "ledger": led.report(), "total": round(led.total, 4)}
 
 
 @app.post("/api/tick")
@@ -312,6 +313,21 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
         return S["out"]
     finally:
         S["busy"].release()
+
+
+def watch_view(S):
+    """What a second device may see: card states and alerts. Never frames, sound or costs."""
+    return {"cards": [{"title": s["title"], "sentence": s.get("sentence", ""), "question": s["question"]} for s in S["specs"]],
+            "states": S["cards"], "log": S.get("log", [])}
+
+
+@app.get("/api/watch/{token}")
+def watch(token: str, request: Request):
+    if not limiter.allow(f"watch:{client_ip(request)}", 60, 60): raise HTTPException(429, "Too many refreshes. Wait a moment.")
+    with sessions_lock:
+        S = next((s for s in sessions.values() if s["watch"] == token), None)
+    if not S: raise HTTPException(404, "This watch has ended.")
+    return watch_view(S)
 
 
 def read_wav(upload, limit):
