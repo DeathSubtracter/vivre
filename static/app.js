@@ -232,8 +232,13 @@ $("#go").onclick = async () => {
   if (talkMic) resetTalk();
   unlockSound();
   say("Reading your rules…"); $("#go").disabled = true;
+  const waited = Date.now();
+  const progress = setInterval(() => {
+    const s = Math.round((Date.now() - waited) / 1000);
+    if (s >= 8) say(`Still reading your rules (${s}s). Meta's models can be slow to answer at times.`);
+  }, 1000);
   try {
-    const res = await fetch("/api/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules, consent: true }) });
+    const res = await fetch("/api/start", { method: "POST", signal: AbortSignal.timeout(90000), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules, consent: true }) });
     if (!res.ok) throw new Error(await detail(res));
     const d = await res.json();
     if (d.sample) { playSample(d.reason); return; }
@@ -248,8 +253,9 @@ $("#go").onclick = async () => {
     }
     if (vid.ended) { vid.currentTime = 0; vid.play(); }
     loop();
-  } catch (e) { say(`Couldn't start. ${e.message}`, true); }
-  finally { $("#go").disabled = false; }
+  } catch (e) {
+    say(e.name === "TimeoutError" ? "Meta's models didn't answer in time. Please try again in a few minutes." : `Couldn't start. ${e.message}`, true);
+  } finally { clearInterval(progress); $("#go").disabled = false; }
 };
 
 // Sample kitchen: a recorded run that costs nothing and always works
