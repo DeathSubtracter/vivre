@@ -6,7 +6,7 @@ Check:  one camera frame -> (SAM 3.1, in the background) object counts -> (Spark
 Cheap model watches all the time; the strong model only speaks up when it matters.
 Every model call happens here, so the key never reaches the browser.
 """
-import hashlib, json, os, threading, time, urllib.request, uuid
+import os, threading, time, uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
@@ -339,21 +339,6 @@ def spoken_rule(request: Request, audio: UploadFile = File(...)):
 
 
 _visible = {"at": 0.0, "n": None}
-_where = {}
-
-
-def _egress():
-    """Temporary: roughly where this server's outgoing traffic appears to come from, without its address."""
-    if not _where:
-        try:
-            with urllib.request.urlopen("https://ipinfo.io/json", timeout=5) as r:
-                o = json.load(r)
-            _where.update(country=o.get("country"), region=o.get("region"), org=o.get("org"),
-                          tag=hashlib.sha256(str(o.get("ip")).encode()).hexdigest()[:6])
-        except Exception as e:
-            _where.update(error=type(e).__name__)
-    return _where
-
 
 @app.get("/healthz")
 def healthz():
@@ -365,7 +350,7 @@ def healthz():
         except Exception as e:
             _visible["n"] = None
             print(f"Couldn't list models: {meta.describe(e)}")
-    return {"ok": True, "models": _visible["n"], "from": _egress()}
+    return {"ok": True, "models": _visible["n"]}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

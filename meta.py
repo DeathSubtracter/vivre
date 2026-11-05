@@ -56,16 +56,30 @@ def jparse(text):
     return o if isinstance(o, dict) else None
 
 
+NOT_FOUND_TRIES = 8
+
+
+def try_past_404(call):
+    """From our host, Meta's API answers some requests with 'model not found' and the next one normally.
+    Failed calls return no output, so asking again is the fix. Other errors go straight to the caller."""
+    for attempt in range(NOT_FOUND_TRIES):
+        try:
+            return call()
+        except Exception as e:
+            if getattr(e, "status_code", None) != 404 or attempt == NOT_FOUND_TRIES - 1: raise
+            time.sleep(0.2 + 0.2 * attempt)
+
+
 def ask(model, content, led, max_tokens=1500, effort=None):
     kw = {"reasoning": {"effort": effort}} if effort and _effort_supported["ok"] else {}
     msg = [{"role": "user", "content": content}]
     try:
-        r = client.responses.create(model=model, input=msg, max_output_tokens=max_tokens, **kw)
+        r = try_past_404(lambda: client.responses.create(model=model, input=msg, max_output_tokens=max_tokens, **kw))
     except BadRequestError:
         if not kw: raise
         print("Reasoning effort was rejected; using the model's default from now on.")
         _effort_supported["ok"] = False
-        r = client.responses.create(model=model, input=msg, max_output_tokens=max_tokens)
+        r = try_past_404(lambda: client.responses.create(model=model, input=msg, max_output_tokens=max_tokens))
     u = getattr(r, "usage", None)
     led.add(model, getattr(u, "input_tokens", 0) or 0, getattr(u, "output_tokens", 0) or 0)
     return r.output_text
@@ -112,7 +126,7 @@ def parse_boxes(text):
 def segment(jpg, phrase, led):
     """The boxes of every `phrase` SAM sees, or None if SAM failed. The app keeps working on Spark alone."""
     try:
-        r = client.responses.create(model=SEG, input=[{"role": "user", "content": [txt(phrase), img(jpg)]}])
+        r = try_past_404(lambda: client.responses.create(model=SEG, input=[{"role": "user", "content": [txt(phrase), img(jpg)]}]))
         led.add(SEG)
         return parse_boxes(r.output_text)
     except Exception as e:
@@ -154,8 +168,9 @@ def confirm(question, frames, note, led, audio=None):
 def transcribe(wav, led):
     """Spoken rule to text. Voice Transcribe has its own endpoint, not the Responses API."""
     request = json.dumps({"model": VOICE, "audioEncoding": "WAV", "mode": "PUSH_TO_TALK"})
-    out = client.post("/asr/transcribe", cast_to=object, options={"headers": {"Content-Type": "multipart/form-data"}},
-                      files=[("request", (None, request, "application/json")), ("audio", ("rule.wav", wav, "audio/wav"))])
+    out = try_past_404(lambda: client.post(
+        "/asr/transcribe", cast_to=object, options={"headers": {"Content-Type": "multipart/form-data"}},
+        files=[("request", (None, request, "application/json")), ("audio", ("rule.wav", wav, "audio/wav"))]))
     # billed in whole seconds, rounded down
     led.add(VOICE, cost=int((out.get("audioDurationMs") or 0) / 1000) * VOICE_PER_SECOND)
     return str(out.get("transcript") or "").strip()

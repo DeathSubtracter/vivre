@@ -94,6 +94,32 @@ class CompileTests(unittest.TestCase):
         self.assertEqual(c.call_count, 2)
 
 
+class RetryTests(unittest.TestCase):
+    class Status(Exception):
+        def __init__(self, code): self.status_code = code
+
+    def test_404s_are_retried_until_one_works(self):
+        replies = [self.Status(404), self.Status(404), "ok"]
+        def call():
+            r = replies.pop(0)
+            if isinstance(r, Exception): raise r
+            return r
+        with mock.patch.object(meta.time, "sleep"):
+            self.assertEqual(meta.try_past_404(call), "ok")
+
+    def test_404s_stop_eventually(self):
+        call = mock.Mock(side_effect=self.Status(404))
+        with mock.patch.object(meta.time, "sleep"), self.assertRaises(self.Status):
+            meta.try_past_404(call)
+        self.assertEqual(call.call_count, meta.NOT_FOUND_TRIES)
+
+    def test_other_errors_are_not_retried(self):
+        call = mock.Mock(side_effect=self.Status(401))
+        with self.assertRaises(self.Status):
+            meta.try_past_404(call)
+        self.assertEqual(call.call_count, 1)
+
+
 class BudgetTests(unittest.TestCase):
     def test_each_cap_trips(self):
         b = Budget(0.5, 2, 3)
