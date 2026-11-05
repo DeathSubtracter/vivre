@@ -36,13 +36,13 @@
         <button type="button" class="chip">Tell me if nobody is at the desk for 10 seconds</button>
         <button type="button" class="chip">Tell me if a cup is left on the table for 10 seconds</button>
         <button type="button" class="chip">Tell me if someone calls for help</button>
-        <button type="button" class="chip">Tell me if you hear clapping</button>
-        <button type="button" class="chip">Tell me if a baby is crying</button>
+        <button type="button" class="chip" data-sound>Tell me if you hear clapping</button>
+        <button type="button" class="chip" data-sound>Tell me if a baby is crying</button>
       </div>
       <label class="consent"><input id="consent" type="checkbox"> I'm only filming people who agreed.</label>
       <button id="go">Start watching</button>
       <p class="fine"><strong>A prototype, not a safety device.</strong> It complements smoke alarms and medical-alert gear. It checks every few seconds and can miss things.</p>
-      <p class="fine">Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never saves them. The microphone only turns on for spoken rules and rules about sounds, and those few seconds of sound are treated the same way.</p>
+      <p class="fine">Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never saves them. The microphone only turns on for spoken rules and rules about sounds, and those few seconds of sound are treated the same way. Alert clips stay in this browser until you close the tab.</p>
       <details class="more">
         <summary>Camera and video options</summary>
         <label for="dev">Camera</label>
@@ -65,6 +65,13 @@
     </section>
   </div>
 </main>
+<dialog id="clip">
+  <video id="clipv" controls playsinline></video>
+  <p id="clipt"></p>
+  <p class="fine">This clip is only in this browser, and it's gone when you close the tab.</p>
+  <a id="clipd" class="quiet">Download clip</a>
+  <button id="clipx" type="button">Close</button>
+</dialog>
 <script type="module" src="app.js"></script>
 </body>
 </html>

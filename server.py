@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -49,6 +50,7 @@ ACTIVE_S = 20            # a session with no check for this long doesn't count a
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 if os.getenv("RAILWAY_ENVIRONMENT_NAME"):  # on the host only, so tests stay offline
     threading.Thread(target=meta.log_visible_models, daemon=True).start()
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # the recognizer's files shrink a lot, which helps on phones
 budget = Budget(PER_SESSION_USD, PER_IP_USD_DAY, GLOBAL_USD_TOTAL, os.getenv("SPEND_FILE", "/tmp/vivre_spend.json"))
 limiter = RateLimiter()
 sessions, sessions_lock = {}, threading.Lock()
@@ -74,7 +76,8 @@ async def guard(request: Request, call_next):
         if size > MAX_BODY_BYTES:
             return JSONResponse({"detail": "That upload is too large."}, 413)
     r = await call_next(request)
-    if not request.url.path.startswith("/vendor/"): r.headers["Cache-Control"] = "no-cache"  # always check for a newer app
+    # the app always checks for a newer copy; the recognizer's large files are kept, so later visits start at once
+    r.headers["Cache-Control"] = "public, max-age=604800" if request.url.path.startswith("/vendor/") else "no-cache"
     r.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
                       "Content-Security-Policy": CSP, "Permissions-Policy": "camera=(self), microphone=(self)"})
     return r
@@ -116,6 +119,15 @@ def parse_heard(raw):
         return {"ms": max(0, min(10000, int(o.get("ms", 0)))), "scores": scores}
     except (TypeError, ValueError, KeyError, AttributeError):
         return None
+
+
+def listen_bars(spec):
+    """Each sound this rule counts and how sure the recognizer must be, so the browser knows when to check at once."""
+    bars = {}
+    for x in spec.get("sound_labels", []):
+        bars[x] = HEARD_MIN
+        bars.update({k: min(v, bars.get(k, 1)) for k, v in SOUND_ALSO.get(x, {}).items()})
+    return bars
 
 
 def heard_match(spec, heard):
@@ -249,7 +261,7 @@ def start(body: Start, request: Request):
     with sessions_lock: sessions[sid] = S
     return {"session": sid, "watch": S["watch"], "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
                                        "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"],
-                                       "sound_labels": s["sound_labels"]}
+                                       "sound_labels": s["sound_labels"], "listen_for": listen_bars(s)}
                                       for s, r in zip(specs, rules)],
             "ledger": led.report(), "total": round(led.total, 4), "stages": S["stages"]}
 
@@ -302,17 +314,18 @@ def explain_later(S, i, spec, alert):
     compile_pool.submit(work)
 
 
-def run_check(S, jpg, diff, now):
+def run_check(S, jpg, diff, now, fast=False):
     """One check for one session. No HTTP here, so tests can run it with stubbed models."""
     t, led, specs = round(now - S["t0"], 1), S["led"], S["specs"]
     S["frames"].append(jpg)
     listen = S["audio"] if any(s.get("uses_sound") for s in specs) else None
     # a still picture says nothing about a sound, so sound rules always get a real look
-    reused = bool(S["last"]) and not listen and diff < STILL_DIFF and now - S["last_call"] < STILL_MAX_S
+    reused = fast or bool(S["last"]) and not listen and diff < STILL_DIFF and now - S["last_call"] < STILL_MAX_S
     stages, problem = S["stages"], None
     frames = list(S["frames"])[-2:] if any(s.get("uses_motion") for s in specs) else [jpg]
     if reused:
-        answers = S["last"]; led.skipped += 1
+        answers = S["last"] or []
+        if not fast: led.skipped += 1
     else:
         S["n"] += 1
         start_sam(S, jpg)
@@ -358,7 +371,7 @@ def run_check(S, jpg, diff, now):
             if state == "due" and by_ear(S, s):  # the recognizer decided, so alert now; Wonder explains afterward
                 timer.confirmed(t, SOUND_ALERT_HOLD_S)
                 S["expl"][i], state = note, "alert"
-                alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": note, "t": t}
+                alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": note, "t": t, "at": round(now * 1000)}
                 S["log"].append(alert); new.append(alert)
                 explain_later(S, i, s, alert)
             elif state == "due":
@@ -373,7 +386,7 @@ def run_check(S, jpg, diff, now):
                 if v["confirm"]:
                     timer.confirmed()
                     S["expl"][i], state = v["explanation"], "alert"
-                    alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": v["explanation"], "t": t}
+                    alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": v["explanation"], "t": t, "at": round(now * 1000)}
                     S["log"].append(alert); new.append(alert)
                 else:
                     timer.rejected(t)
@@ -408,12 +421,17 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
         if reason := budget.blocked(ip, S["led"].total):
             with sessions_lock: sessions.pop(session, None)
             return sample_reply(reason)
-        if S["out"] and now - S["last_tick"] < MIN_CHECK_S: return S["out"]
-        S["last_tick"] = now
-        S["heard"] = parse_heard(heard) if heard else None
+        parsed = parse_heard(heard) if heard else None
+        # a wanted sound can't wait for the next check. This path asks no model, so it costs nothing and needs no limit of its own.
+        fast = bool(parsed) and now - S["last_tick"] < MIN_CHECK_S and any(
+            heard_match(s, parsed) and not t.fired for s, t in zip(S["specs"], S["timers"]))
+        if S["out"] and now - S["last_tick"] < MIN_CHECK_S and not fast: return S["out"]
+        if not fast: S["last_tick"] = now
+        S["heard"] = parsed
         S["audio"] = clip  # only the latest few seconds, and only in memory
-        S["out"] = run_check(S, jpg, diff, now)
-        return S["out"]
+        out = run_check(S, jpg, diff, now, fast=fast)
+        S["out"] = {**out, "new_alerts": []}  # a repeat of this reply must not announce the alert again
+        return out
     finally:
         S["busy"].release()
 

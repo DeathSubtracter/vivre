@@ -5,6 +5,7 @@ import { downsample, encodeWav } from "../static/audio.js";
 import { coverMap } from "../static/boxes.js";
 import { stripHtml } from "../static/strip.js";
 import { bestScores, topScores } from "../static/hearing.js";
+import { bestMime, pickRecording, clipOffset, PRE_S } from "../static/clips.js";
 
 test("downsample turns 48 kHz into a third as many samples and keeps the level", () => {
   const out = downsample(new Float32Array(4800).fill(0.5), 48000);
@@ -39,6 +40,20 @@ test("Silence only counts when nothing else was heard", () => {
   assert.deepEqual(topScores({ Silence: 0.8, Clapping: 0.4 }), { Clapping: 0.4 });
   assert.deepEqual(topScores({ Silence: 0.8 }), { Silence: 0.8 });
   assert.equal(Object.keys(topScores(Object.fromEntries([...Array(20).keys()].map(i => ["s" + i, i / 20])))).length, 12);
+});
+
+test("clips use the longest-running free recording and open just before the alert", () => {
+  const live = [{ started: 3000 }, { started: 1000, claimed: true }, { started: 2000 }];
+  assert.equal(pickRecording(live).started, 2000);
+  assert.equal(pickRecording([{ started: 1, claimed: true }]), null);
+  assert.equal(clipOffset(0, (PRE_S + 7) * 1000), 7);
+  assert.equal(clipOffset(0, 3000), 0);
+});
+
+test("clips prefer MP4 and fall back to WebM, or nothing", () => {
+  assert.ok(bestMime(t => t.startsWith("video/mp4")).startsWith("video/mp4"));
+  assert.equal(bestMime(t => t === "video/webm"), "video/webm");
+  assert.equal(bestMime(() => false), "");
 });
 
 test("boxes follow the video's crop", () => {

@@ -84,7 +84,7 @@ class CompileTests(unittest.TestCase):
     def test_every_example_button_has_a_valid_saved_rule_and_skips_the_model(self):
         import re
         html = open(os.path.join(os.path.dirname(__file__), "..", "static", "index.html")).read()
-        chips = re.findall(r'class="chip">([^<]+)<', html)
+        chips = re.findall(r'class="chip"[^>]*>([^<]+)<', html)
         self.assertEqual(len(chips), 6)
         with mock.patch.object(meta, "compile_rule") as model:
             for chip in chips:
@@ -365,6 +365,26 @@ class HearingTests(unittest.TestCase):
             server.explain_later(S, 0, S["specs"][0], alert)
         self.assertEqual(alert["say"], "Heard clapping (80% sure).")
         self.assertEqual(S["stages"]["confirm"]["state"], "unavailable")
+
+    def test_a_wanted_sound_fires_at_once_with_no_model_call(self):
+        S = session(0)
+        S["specs"].append({"title": "T", "subjects": [], "question": "Q2?", "duration_s": 0})
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        S["timers"].append(RuleTimer(0)); S["cards"].append(dict(S["cards"][0])); S["expl"].append("")
+        S["last"] = [{"yes": False, "note": "n"}]
+        S["heard"] = {"ms": 1, "scores": {"Hands": 0.9}}
+        with mock.patch.object(meta, "check_frame") as spark, mock.patch.object(server, "start_sam") as sam, \
+             mock.patch.object(server, "explain_later"):
+            out = server.run_check(S, b"j", 1, 3, fast=True)
+        spark.assert_not_called(); sam.assert_not_called()
+        self.assertEqual(out["cards"][0]["status"], "alert")
+        self.assertEqual(out["new_alerts"][0]["at"], 3000)
+        self.assertEqual(out["skipped"], 0)
+
+    def test_the_browser_is_told_every_label_and_bar(self):
+        self.assertEqual(server.listen_bars({"sound_labels": ["Clapping"]}),
+                         {"Clapping": server.HEARD_MIN, "Hands": 0.5, "Applause": 0.25})
+        self.assertEqual(server.listen_bars({"sound_labels": []}), {})
 
     def test_without_the_recognizer_spark_decides(self):
         S = session(0)

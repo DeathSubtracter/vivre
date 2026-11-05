@@ -2,6 +2,7 @@ import { stripHtml } from "./strip.js";
 import { Mic } from "./audio.js";
 import { drawBoxes } from "./boxes.js";
 import { loadHearing, hear, topScores } from "./hearing.js";
+import { ClipKeeper } from "./clips.js";
 
 const $ = s => document.querySelector(s);
 const INTERVAL = 3000, MAX_RULES = 3, MAX_HISTORY = 40, MAX_FAILS = 3, ROOM_SECONDS = 4, MAX_SPOKEN_SECONDS = 15;
@@ -9,8 +10,10 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const vid = $("#cam"), cv = document.createElement("canvas"), sm = document.createElement("canvas");
 sm.width = sm.height = 16;
 let audio, wake, stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
+let keeper = null, clips = {}, savingClips = new Set(), lastLog = [], states = [], inFlight = false, wantNow = false, nextCheck = null, lastSent = 0;
 let hearingError = "", hearingOn = false, hearTimer = null, peak = {}, hearMs = 0, watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
 
+const preloadHearing = () => { loadHearing().catch(e => console.error(e)); };  // a failure is retried, and reported, at Start
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
 const setMonitor = on => document.body.classList.toggle("monitor", on);
@@ -50,6 +53,7 @@ async function startCam(id) {
     stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
     vid.removeAttribute("src"); vid.srcObject = stream; await vid.play();
     $("#camOn").hidden = true; $("#placeholder").hidden = true;
+    preloadHearing();  // get the recognizer ready early, so listening can begin as soon as Start is pressed
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
     $("#dev").innerHTML = devs.map(d => `<option value="${esc(d.deviceId)}">${esc(d.label || "Camera")}</option>`).join("");
     $("#dev").value = id || stream.getVideoTracks()[0].getSettings().deviceId || $("#dev").value;
@@ -77,7 +81,7 @@ function addRule(text) {
   if (lines.length >= MAX_RULES) { say(`Vivre watches up to ${MAX_RULES} rules at once.`, true); return; }
   $("#rules").value = [...lines, text].join("\n");
 }
-document.querySelectorAll(".chip").forEach(c => c.onclick = () => addRule(c.textContent));
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => { addRule(c.textContent); if ("sound" in c.dataset) preloadHearing(); });
 
 // Spoken rules: tap to start, tap to stop. Muse Voice Transcribe turns them into text you can check and edit.
 function resetTalk() {
@@ -126,9 +130,22 @@ async function detail(res) {
   try { return (await res.json()).detail || res.statusText; } catch { return res.statusText; }
 }
 
+function checkNow() {
+  if (!running || Date.now() - lastSent < 1000) return;
+  if (inFlight) { wantNow = true; return; }
+  clearTimeout(nextCheck);
+  loop();
+}
+
+// Did the recognizer just hear a sound some rule is waiting for? Then that rule shouldn't wait for the next check.
+function wantedSoundHeard() {
+  return meta.some((m, i) => states[i] !== "alert" && Object.entries(m.listen_for || {}).some(([k, bar]) => peak[k] >= bar));
+}
+
 async function loop() {
-  if (!running) return;
+  if (!running || inFlight) return;
   const t0 = Date.now();
+  inFlight = true; wantNow = false; lastSent = t0;
   try {
     const { blob, diff } = await grab();
     const fd = new FormData();
@@ -143,7 +160,8 @@ async function loop() {
     if (!running) return;
     if (d.sample) { stop(); playSample(d.reason); return; }
     fails = 0;
-    d.new_alerts.forEach(a => { thumbs[a.id] = cv.toDataURL("image/jpeg", 0.5); });
+    states = d.cards.map(c => c.status);
+    d.new_alerts.forEach(a => { thumbs[a.id] = cv.toDataURL("image/jpeg", 0.5); saveClip(a.id); });
     render(d); showBoxes(d.boxes);
     history.push({ img: cv.toDataURL("image/jpeg", 0.5), d });
     if (history.length > MAX_HISTORY) history.shift();
@@ -154,16 +172,17 @@ async function loop() {
     fails += 1;
     if (fails >= MAX_FAILS) { say(`Stopped: ${e.message}`, true); stop(); return; }
     say(`Trouble on the last check, trying again. ${e.message}`, true);
-  }
+  } finally { inFlight = false; }
+  if (!running) return;
   if (vid.ended) { say("The video ended."); stop(); return; }
-  setTimeout(loop, Math.max(200, INTERVAL - (Date.now() - t0)));
+  nextCheck = setTimeout(loop, wantNow ? 0 : Math.max(200, INTERVAL - (Date.now() - t0)));
 }
 
 // The recognizer listens all the time, keeping each sound's strongest score until the next check, so a short clap isn't missed.
 function startListening() {
   stopListening(); peak = {}; $("#hearing").hidden = false; $("#hearing").textContent = "Listening…";
   hearTimer = setInterval(() => {
-    const sound = roomMic?.samples(2);
+    const sound = roomMic?.samples(1.5);
     if (!sound) return;
     try {
       const r = hear(sound, 16000);
@@ -171,8 +190,9 @@ function startListening() {
       for (const [k, v] of Object.entries(r.scores)) if (!(v <= peak[k])) peak[k] = v;
       const [top, score] = Object.entries(topScores(r.scores, 1))[0] || ["Silence", 0];
       $("#hearing").textContent = `Hearing now: ${top} ${Math.round(score * 100)}%`;
+      if (wantedSoundHeard()) checkNow();
     } catch (e) { console.error(e); }
-  }, 1000);
+  }, 500);
 }
 function stopListening() { clearInterval(hearTimer); hearTimer = null; $("#hearing").hidden = true; }
 
@@ -201,12 +221,42 @@ function planText(m) {
   else if (m.uses_sound) parts.push("Listens for speech with the microphone.");
   return parts.join(" ");
 }
-function clock(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
+// Shown in the viewer's own time zone, with its name, so it's right wherever someone opens it.
+const clock = ms => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
 function renderLog(log = []) {
-  $("#log").innerHTML = !log.length ? "" : `<h2>Alerts</h2><ol>${[...log].reverse().map(a => `<li>
-    ${thumbs[a.id] ? `<img src="${thumbs[a.id]}" alt="Frame when this alert fired">` : ""}
-    <span><b>${esc(a.title)}</b> at ${clock(a.t)}<br>${esc(a.say)}</span></li>`).join("")}</ol>`;
+  lastLog = log;
+  $("#log").innerHTML = !log.length ? "" : `<h2>Alerts</h2><ol>${[...log].reverse().map(a => {
+    const pic = thumbs[a.id] ? `<img src="${thumbs[a.id]}" alt="Frame when this alert fired">` : "";
+    const open = clips[a.id] ? `<button type="button" class="thumb" data-clip="${Number(a.id)}" aria-label="Play the clip of this alert">${pic}</button>` : pic;
+    const note = savingClips.has(a.id) ? `<br><span class="fine">Saving a clip…</span>` : clips[a.id] ? `<br><span class="fine">Click the picture to watch the clip.</span>` : "";
+    return `<li>${open}<span><b>${esc(a.title)}</b> at ${esc(clock(a.at))}<br>${esc(a.say)}${note}</span></li>`;
+  }).join("")}</ol>`;
 }
+
+// Alert clips
+function startClips() {
+  const tracks = [...(stream?.getVideoTracks() || []), ...(roomMic?.stream?.getAudioTracks() || [])];
+  keeper = tracks.length ? new ClipKeeper(tracks) : null;
+  keeper?.start();
+}
+function saveClip(id) {
+  const saving = keeper?.claim(Date.now());
+  if (!saving) return;
+  savingClips.add(id);
+  saving.then(clip => { if (clip) clips[id] = clip; }).catch(e => console.error(e)).finally(() => { savingClips.delete(id); renderLog(lastLog); });
+}
+$("#log").onclick = e => {
+  const id = e.target.closest("[data-clip]")?.dataset.clip;
+  if (!id || !clips[id]) return;
+  const a = lastLog.find(x => String(x.id) === id), v = $("#clipv");
+  v.src = clips[id].url;
+  v.onloadedmetadata = () => { v.currentTime = clips[id].offset; v.play().catch(() => {}); };
+  $("#clipt").textContent = `${a.title} at ${clock(a.at)}. ${a.say}`;
+  $("#clipd").href = clips[id].url; $("#clipd").download = `vivre-alert-${id}.${clips[id].ext}`;
+  $("#clip").showModal();
+};
+$("#clipx").onclick = () => $("#clip").close();
+$("#clip").onclose = () => { $("#clipv").pause(); $("#clipv").removeAttribute("src"); $("#clipv").load(); };
 function render(d) {
   if (d.log) renderLog(d.log);
   $("#cards").innerHTML = d.cards.map((c, i) => `<article class="card ${esc(c.status)}">
@@ -226,6 +276,7 @@ function render(d) {
 function stop() {
   running = false; session = null;
   wake?.release().catch(() => {}); wake = null;
+  clearTimeout(nextCheck); keeper?.stop(); keeper = null; states = [];
   stopListening(); roomMic?.stop(); roomMic = null; hearingOn = false; hearingError = ""; spoken = null; showBoxes([]);
   document.body.classList.remove("alerting");
   setMonitor(false); $("#stop").hidden = true; $("#share").hidden = true;
@@ -264,6 +315,7 @@ $("#go").onclick = async () => {
     const d = await res.json();
     if (d.sample) { playSample(d.reason); return; }
     session = d.session; meta = d.cards; history = []; prev = null; fails = 0; running = true;
+    Object.values(clips).forEach(c => URL.revokeObjectURL(c.url)); clips = {};
     watchToken = d.watch; thumbs = {}; renderLog([]); $("#share").hidden = false; $("#share").textContent = "Get alerts on another device";
     $("#rev").hidden = true; setMonitor(true); $("#stop").hidden = false; keepAwake();
     render({ cards: meta.map(m => ({ status: "ok", held: 0, need: m.need, note: "" })), ledger: d.ledger, t: 0, skipped: 0, stages: d.stages, total: d.total });
@@ -289,6 +341,7 @@ $("#go").onclick = async () => {
       } catch { say("A rule needs sound, but the microphone is off, so it can't fire. Allow the microphone and start again.", true); }
     }
     if (vid.ended) { vid.currentTime = 0; vid.play(); }
+    startClips();
     loop();
   } catch (e) {
     say(e.name === "TimeoutError" ? "Meta's models didn't answer in time. Please try again in a few minutes." : `Couldn't start. ${e.message}`, true);

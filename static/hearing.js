@@ -1,8 +1,13 @@
 // Recognizes everyday sounds with YAMNet, running in this browser through Google's MediaPipe. Loaded only when a rule needs it.
-let classifier = null;
+let classifier = null, loading = null;
 
-export async function loadHearing() {
-  if (classifier) return;
+// Safe to call early and more than once: every caller shares one download, and a failed one can be tried again.
+export function loadHearing() {
+  loading = loading || download().catch(e => { loading = null; throw e; });
+  return loading;
+}
+
+async function download() {
   const { FilesetResolver, AudioClassifier } = await import("./vendor/audio_bundle.mjs");
   const files = await FilesetResolver.forAudioTasks(new URL("vendor/wasm", location.href).href);
   classifier = await AudioClassifier.createFromOptions(files, {
