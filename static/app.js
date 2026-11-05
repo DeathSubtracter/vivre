@@ -48,7 +48,7 @@ async function startCam(id) {
     $("#camOn").hidden = true; $("#placeholder").hidden = true;
     const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
     $("#dev").innerHTML = devs.map(d => `<option value="${esc(d.deviceId)}">${esc(d.label || "Camera")}</option>`).join("");
-    if (id) $("#dev").value = id;
+    $("#dev").value = id || stream.getVideoTracks()[0].getSettings().deviceId || $("#dev").value;
     say("");
   } catch (e) { say(cameraHelp(e), true); }
 }

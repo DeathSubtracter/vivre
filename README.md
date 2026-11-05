@@ -2,6 +2,8 @@
 
 Describe what to watch for in a sentence. Vivre watches a camera and speaks up when it happens.
 
+**Try it:** https://web-production-749fb.up.railway.app (allow the camera, then pick or type a rule)
+
 Built for the Meta Global AI Developer Hackathon. All of the code in this repository was written during the event (Nov 3 to 4, 2026). Built with Claude; the models are Meta's.
 
 **Vivre is a prototype, not a safety device.** It checks every few seconds and can miss things or get things wrong. It complements smoke alarms and medical-alert gear and doesn't replace them.
@@ -33,7 +35,9 @@ flowchart LR
 - Each check takes a few seconds, so Vivre won't catch something that is over in a moment.
 - It has only been tried on a few simple scenes. Expect false alarms and misses.
 - Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
-- Live use is capped per session, per visitor and overall. When a cap is reached, the app switches to a recorded sample.
+- Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, the app switches to a sample. For now that sample is a hand-written placeholder, and it's labeled as one.
+- The hosted server got "model not found" errors from Meta's API for part of Nov 4, then started working. The cause isn't known, so live watching on the link may occasionally fall back to the sample.
+- Sound isn't used yet. Early tests showed Muse Wonder accepting an image with a sound clip and Muse Voice Transcribe transcribing speech, but neither is in the app.
 
 ## Run it
 
