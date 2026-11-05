@@ -29,6 +29,11 @@ export function speechLimitMs(text) {
   return Math.min(15000, 1500 + 90 * String(text).length);
 }
 
+// iPads can report themselves as Macs, but Macs have no touch points.
+export function iosDevice(userAgent, platform, touchPoints) {
+  return /iPhone|iPad|iPod/.test(userAgent) || (platform === "MacIntel" && touchPoints > 1);
+}
+
 export class Mic {
   // raw: skip the browser's noise suppression, which is built for speech and can remove claps, cries and alarms
   constructor(keepSeconds, raw = false) { this.keep = keepSeconds; this.raw = raw; this.chunks = []; this.held = 0; }

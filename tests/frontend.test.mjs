@@ -1,7 +1,7 @@
 // Run with: node --test tests/frontend.test.mjs   (no browser, no API calls)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { downsample, encodeWav, speechLimitMs } from "../static/audio.js";
+import { downsample, encodeWav, speechLimitMs, iosDevice } from "../static/audio.js";
 import { coverMap } from "../static/boxes.js";
 import { stripHtml } from "../static/strip.js";
 import { bestScores, topScores } from "../static/hearing.js";
@@ -16,6 +16,12 @@ test("downsample turns 48 kHz into a third as many samples and keeps the level",
 test("a stuck spoken alert can only block listening for a limited time", () => {
   assert.equal(speechLimitMs("Hi"), 1680);
   assert.equal(speechLimitMs("x".repeat(5000)), 15000);
+});
+
+test("iPhones and iPads count as iOS, and Macs don't", () => {
+  assert.ok(iosDevice("Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)", "iPhone", 5));
+  assert.ok(iosDevice("Mozilla/5.0 (Macintosh; Intel Mac OS X)", "MacIntel", 5));  // an iPad asking for desktop sites
+  assert.ok(!iosDevice("Mozilla/5.0 (Macintosh; Intel Mac OS X)", "MacIntel", 0));
 });
 
 test("audio already at 16 kHz is left alone", () => {

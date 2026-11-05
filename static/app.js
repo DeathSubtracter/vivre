@@ -1,5 +1,5 @@
 import { stripHtml } from "./strip.js";
-import { Mic, speechLimitMs } from "./audio.js";
+import { Mic, speechLimitMs, iosDevice } from "./audio.js";
 import { drawBoxes } from "./boxes.js";
 import { loadHearing, hear, topScores } from "./hearing.js";
 import { ClipKeeper } from "./clips.js";
@@ -16,8 +16,11 @@ let hearingError = "", hearingOn = false, hearTimer = null, peak = {}, hearMs = 
 const preloadHearing = () => { loadHearing().catch(e => console.error(e)); };  // a failure is retried, and reported, at Start
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 let spokeUntil = 0, speechDeadline = 0;
+// Tested on an iPhone: speech made no words and cut off the camera and microphone, while Web Audio chimes played fine.
+const IOS = iosDevice(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
+const speechHurtsCapture = () => IOS && Boolean(stream || roomMic);
 const speak = m => {
-  if (!("speechSynthesis" in window)) return;
+  if (!("speechSynthesis" in window) || speechHurtsCapture()) return;
   const u = new SpeechSynthesisUtterance(m);
   const done = () => { spokeUntil = Date.now(); };
   u.onend = done; u.onerror = done;
@@ -41,9 +44,10 @@ const setMonitor = on => document.body.classList.toggle("monitor", on);
 // Spoken alerts need a sound first, so a propped-up phone gets noticed. Both start from a tap.
 function chime() {
   if (!audio) return;
-  [660, 880].forEach((f, i) => {
+  const noVoice = speechHurtsCapture();  // the chime is the only sound here, so it has to carry across a room
+  (noVoice ? [660, 880, 660, 880] : [660, 880]).forEach((f, i) => {
     const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + i * 0.18;
-    o.frequency.value = f; g.gain.setValueAtTime(0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.frequency.value = f; g.gain.setValueAtTime(noVoice ? 0.5 : 0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
     o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.3);
   });
 }
@@ -51,10 +55,16 @@ async function keepAwake() {
   try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; }
 }
 document.addEventListener("visibilitychange", () => {
-  if (running && document.visibilityState === "visible") keepAwake();
+  if (running && document.visibilityState === "visible") { keepAwake(); resumeCapture(); }
 });
+// Phones can pause the video and audio when something interrupts them, such as a call. Pick them back up.
+function resumeCapture() {
+  if (stream && vid.srcObject === stream && vid.paused) vid.play().catch(() => {});
+  audio?.resume().catch(() => {});
+  roomMic?.ctx?.resume().catch(() => {});
+}
 function unlockSound() {
-  if ("speechSynthesis" in window) {
+  if ("speechSynthesis" in window && !speechHurtsCapture()) {
     speechSynthesis.cancel();  // clear anything stuck from the last session, then unlock speech during this tap
     speechSynthesis.speak(new SpeechSynthesisUtterance(" "));
   }
@@ -169,6 +179,7 @@ async function loop() {
   if (!running || inFlight) return;
   const t0 = Date.now();
   inFlight = true; wantNow = false; lastSent = t0;
+  resumeCapture();
   try {
     const { blob, diff } = await grab();
     const fd = new FormData();
@@ -222,6 +233,7 @@ function stopListening() { clearInterval(hearTimer); hearTimer = null; $("#heari
 function quietStatus(d) {
   if (d.problem) { say(d.problem, true); return; }
   if (hearingError) { say(hearingError, true); return; }
+  if (stream?.getVideoTracks()[0]?.muted) { say("The camera is paused by this device. If it doesn't come back, stop watching and start again.", true); return; }
   const hot = d.cards.findIndex(c => c.status === "alert");
   if (hot >= 0) say(`Needs attention: ${meta[hot].title}`);
   else if (d.stages?.see?.state === "unavailable") say("Watching on Spark only. SAM is unavailable.");
