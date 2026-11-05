@@ -81,6 +81,18 @@ class ParseTests(unittest.TestCase):
 
 
 class CompileTests(unittest.TestCase):
+    def test_every_example_button_has_a_valid_saved_rule_and_skips_the_model(self):
+        import re
+        html = open(os.path.join(os.path.dirname(__file__), "..", "static", "index.html")).read()
+        chips = re.findall(r'class="chip">([^<]+)<', html)
+        self.assertEqual(len(chips), 6)
+        with mock.patch.object(meta, "compile_rule") as model:
+            for chip in chips:
+                self.assertTrue(server.compile_valid(chip, None), chip)
+        model.assert_not_called()
+        self.assertEqual(server.saved_rule("Tell me if you hear clapping.")["sound_labels"], ["Clapping"])
+        self.assertIsNone(server.saved_rule("Tell me if a dog barks"))
+
     good = {"question": "Is a cup there?", "subjects": ["cup"], "duration_s": 1}
 
     def test_a_bad_reply_gets_one_retry(self):

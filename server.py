@@ -74,6 +74,7 @@ async def guard(request: Request, call_next):
         if size > MAX_BODY_BYTES:
             return JSONResponse({"detail": "That upload is too large."}, 413)
     r = await call_next(request)
+    if not request.url.path.startswith("/vendor/"): r.headers["Cache-Control"] = "no-cache"  # always check for a newer app
     r.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
                       "Content-Security-Policy": CSP, "Permissions-Policy": "camera=(self), microphone=(self)"})
     return r
@@ -167,8 +168,37 @@ class Start(BaseModel):
     consent: bool = False
 
 
+# The example buttons are already compiled, so they start at once, cost nothing to read, and don't depend on Meta's API.
+SAVED_RULES = {
+    "tell me if the stove is on with a pot and nobody has been in the kitchen for 10 seconds": {
+        "title": "Stove on, nobody there", "question": "Is a stove burner on with a pot on it, and nobody in the kitchen?",
+        "subjects": ["cooking pot", "person"], "duration_s": 10,
+        "conditions": [{"subject": "cooking pot", "min": 1}, {"subject": "person", "max": 0}]},
+    "tell me if nobody is at the desk for 10 seconds": {
+        "title": "Desk unattended", "question": "Is there no person visible at the desk?", "subjects": ["person"], "duration_s": 10,
+        "conditions": [{"subject": "person", "max": 0}]},
+    "tell me if a cup is left on the table for 10 seconds": {
+        "title": "Cup left on table", "question": "Is a cup on the table?", "subjects": ["cup", "table"], "duration_s": 10,
+        "conditions": [{"subject": "cup", "min": 1}]},
+    "tell me if someone calls for help": {
+        "title": "Call for help", "question": "Do you hear someone calling for help?", "subjects": [], "duration_s": 0, "uses_sound": True},
+    "tell me if you hear clapping": {
+        "title": "Clapping heard", "question": "Is clapping audible?", "subjects": [], "duration_s": 0, "uses_sound": True,
+        "sound_labels": ["Clapping"]},
+    "tell me if a baby is crying": {
+        "title": "Baby crying", "question": "Is a baby crying?", "subjects": [], "duration_s": 0, "uses_sound": True,
+        "sound_labels": ["Baby cry, infant cry"]},
+}
+
+
+def saved_rule(sentence):
+    spec = SAVED_RULES.get(sentence.strip().rstrip(".!").lower())
+    return validate_spec(spec, sentence) if spec else None
+
+
 def compile_valid(sentence, led):
     """A model reply can come back empty or malformed, so it gets one more try before we bother the person."""
+    if (spec := saved_rule(sentence)): return spec
     for _ in range(2):
         spec = validate_spec(meta.compile_rule(sentence, led), sentence)
         if spec: return spec
@@ -215,7 +245,7 @@ def start(body: Start, request: Request):
          "sam_pending": 0, "sam_ok": None, "sam_ms": None,
          "lock": threading.Lock(), "busy": threading.Lock(), "out": None, "log": [], "watch": uuid.uuid4().hex,
          "cards": [{"status": "ok", "held": 0, "need": s["duration_s"], "note": ""} for s in specs],
-         "stages": {"understand": {"model": meta.COMPILER, "state": "ok", "ms": ms}}}
+         "stages": {"understand": {"model": "saved example rule" if all(saved_rule(r) for r in rules) else meta.COMPILER, "state": "ok", "ms": ms}}}
     with sessions_lock: sessions[sid] = S
     return {"session": sid, "watch": S["watch"], "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
                                        "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"],
