@@ -49,7 +49,7 @@ flowchart LR
 - Motion rules compare two frames a few seconds apart, so quick movements can be missed.
 - Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
 - Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, live watching stops and the app says why.
-- On Nov 4, around the submission deadline, calls from the hosted server to Meta's API often failed with "model not found". They stopped around 6:20 PM PT. The cause isn't known. Vivre retries for about a minute and then says so, so the hosted link could occasionally be unavailable. You can also run it locally (see below).
+- **The hosted link may not work at times.** On Nov 4, Meta's API often answered calls from the hosted server with "model not found", for long stretches, while the same calls from a laptop worked. The cause isn't known. When this happens, Vivre retries for about a minute and then says so. Running it locally (see below) avoids this.
 
 ## Run it
 
