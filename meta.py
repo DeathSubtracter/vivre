@@ -6,7 +6,7 @@ from openai import BadRequestError, OpenAI
 
 load_dotenv()
 client = OpenAI(base_url=os.getenv("META_BASE_URL", "https://api.meta.ai/v1"),
-                api_key=os.getenv("MODEL_API_KEY", "missing"),
+                api_key=os.getenv("MODEL_API_KEY", "missing").strip(),
                 timeout=float(os.getenv("MODEL_TIMEOUT_S", "25")), max_retries=1)
 COMPILER = os.getenv("COMPILER_MODEL", "muse-spark-1.2")  # also the per-check watcher
 JUDGE = os.getenv("JUDGE_MODEL", "muse-wonder-1.0")       # confirms and explains alerts
@@ -131,3 +131,13 @@ def describe(e):
     """A short error line for the logs, with the key scrubbed out. Never includes images."""
     key = os.getenv("MODEL_API_KEY") or "\0"
     return f"{type(e).__name__} status={getattr(e, 'status_code', None)} {str(e).replace(key, '<key>')[:300]}"
+
+
+def log_visible_models():
+    """Free startup check: which models this server can see. Never prints the key."""
+    raw = os.getenv("MODEL_API_KEY", "")
+    print(f"Key: length {len(raw)}, stray spaces {raw != raw.strip()}. API: {client.base_url}. Using: {COMPILER}, {JUDGE}, {SEG}")
+    try:
+        print("Models this server can see:", sorted(m.id for m in client.models.list().data))
+    except Exception as e:
+        print(f"Couldn't list models: {describe(e)}")
