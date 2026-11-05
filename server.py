@@ -432,7 +432,7 @@ _visible = {"at": 0.0, "n": None}
 @app.get("/api/probe-temp")
 def probe_temp():
     import diag_probe  # temporary, removed right after this test
-    if not limiter.allow("probe", 2, 120): raise HTTPException(429, "Wait a moment.")
+    if not limiter.allow("probe", 4, 60): raise HTTPException(429, "Wait a moment.")
     return diag_probe.run()
 
 
