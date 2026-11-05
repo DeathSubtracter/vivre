@@ -356,6 +356,26 @@ def spoken_rule(request: Request, audio: UploadFile = File(...)):
 
 _visible = {"at": 0.0, "n": None}
 
+@app.get("/api/diag")
+def diag(request: Request):
+    """Temporary and free: does the network route change what Meta's API lists? Shows counts only."""
+    import socket, httpx2
+    if not limiter.allow("diag", 6, 60): raise HTTPException(429, "Wait a moment.")
+    def sample(local):
+        try:
+            with httpx2.Client(transport=httpx2.HTTPTransport(local_address=local), timeout=8) as c:
+                r = [c.get("https://api.meta.ai/v1/models", headers={"Authorization": f"Bearer {meta.client.api_key}"}) for _ in range(6)]
+            return [(x.status_code, len(x.json().get("data", [])), x.headers.get("x-fb-debug", "")[:6], x.extensions.get("http_version", b"").decode()) for x in r]
+        except Exception as e:
+            return type(e).__name__
+    try:
+        addrs = sorted({a[4][0] for a in socket.getaddrinfo("api.meta.ai", 443)})
+    except OSError as e:
+        addrs = type(e).__name__
+    return {"addresses": addrs, "ipv4": sample("0.0.0.0"), "ipv6": sample("::"),
+            "sdk": [len(meta.client.models.list().data) for _ in range(6)]}
+
+
 @app.get("/healthz")
 def healthz():
     """Free: how many models Meta offers this server right now, checked at most every 20 seconds."""
