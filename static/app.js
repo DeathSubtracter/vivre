@@ -9,7 +9,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const vid = $("#cam"), cv = document.createElement("canvas"), sm = document.createElement("canvas");
 sm.width = sm.height = 16;
 let audio, wake, stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
-let hearingOn = false, hearTimer = null, peak = {}, hearMs = 0, watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
+let hearingError = "", hearingOn = false, hearTimer = null, peak = {}, hearMs = 0, watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
 
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
@@ -178,6 +178,7 @@ function stopListening() { clearInterval(hearTimer); hearTimer = null; $("#heari
 
 function quietStatus(d) {
   if (d.problem) { say(d.problem, true); return; }
+  if (hearingError) { say(hearingError, true); return; }
   const hot = d.cards.findIndex(c => c.status === "alert");
   if (hot >= 0) say(`Needs attention: ${meta[hot].title}`);
   else if (d.stages?.see?.state === "unavailable") say("Watching on Spark only. SAM is unavailable.");
@@ -225,7 +226,7 @@ function render(d) {
 function stop() {
   running = false; session = null;
   wake?.release().catch(() => {}); wake = null;
-  stopListening(); roomMic?.stop(); roomMic = null; hearingOn = false; spoken = null; showBoxes([]);
+  stopListening(); roomMic?.stop(); roomMic = null; hearingOn = false; hearingError = ""; spoken = null; showBoxes([]);
   document.body.classList.remove("alerting");
   setMonitor(false); $("#stop").hidden = true; $("#share").hidden = true;
   if (!history.length) return;
@@ -275,13 +276,15 @@ $("#go").onclick = async () => {
         if (wantsRecognizer) {
           say("Loading the sound recognizer…");
           try {
-            try { await loadHearing(); }
-            catch (e) { console.error(e); await new Promise(r => setTimeout(r, 1000)); await loadHearing(); }  // one more try for a dropped download
-            hearingOn = true; startListening();
+            await loadHearing(); hearingOn = true; startListening();
             for (let i = 0; i < 25 && !roomMic.samples(1); i++) await new Promise(r => setTimeout(r, 100));  // a second of sound first
             say("Watching and listening. Checks run every few seconds.");
           }
-          catch (e) { console.error(e); say(`The sound recognizer couldn't load, so sounds other than speech may be missed. Reason: ${String(e?.message || e).slice(0, 160)}`, true); await new Promise(r => setTimeout(r, 6000)); }
+          catch (e) {
+            console.error(e);
+            hearingError = `The sound recognizer couldn't load (${e?.name || "Error"}: ${String(e?.message || e).slice(0, 160)}), so alerts for sounds other than speech may be slow or missed.`;
+            say(hearingError, true);
+          }
         }
       } catch { say("A rule needs sound, but the microphone is off, so it can't fire. Allow the microphone and start again.", true); }
     }
