@@ -102,7 +102,7 @@ SPEC = ('Return ONLY JSON: {"title": short card title, "subjects": [1-3 plain no
         '"nobody is at the desk" needs {"subject":"person","max":0}. "the stove is on with a pot and nobody is there" needs '
         'both {"subject":"cooking pot","min":1} and {"subject":"person","max":0}. Empty only if counting objects can\'t '
         'decide it, like a sound or whether a burner is lit], '
-        '"uses_sound": true only if the rule depends on hearing something, '
+        '"uses_sound": true if the rule depends on hearing something, including anyone calling, shouting or saying words, '
         f'"sound_labels": [for a non-speech sound, the matching names copied exactly from {json.dumps(SOUND_LABELS)}; empty for '
         'anything else, including words someone says such as calling for help], "uses_motion": true only if it depends on '
         'movement between frames, such as waving}')
