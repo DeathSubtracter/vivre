@@ -15,7 +15,21 @@ let hearingError = "", hearingOn = false, hearTimer = null, peak = {}, hearMs = 
 
 const preloadHearing = () => { loadHearing().catch(e => console.error(e)); };  // a failure is retried, and reported, at Start
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
-const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
+let spokeUntil = 0;
+const speak = m => {
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(m);
+  u.onend = () => { spokeUntil = Date.now(); };
+  spokeUntil = Date.now();
+  speechSynthesis.speak(u);
+};
+// Vivre must not hear its own alert: only send sound recorded after it finished speaking.
+function roomClip() {
+  if (!roomMic) return null;
+  if ("speechSynthesis" in window && speechSynthesis.speaking) { spokeUntil = Date.now(); return null; }
+  const seconds = Math.min(ROOM_SECONDS, (Date.now() - spokeUntil) / 1000 - 0.3);
+  return seconds >= 1 ? roomMic.wav(seconds) : null;
+}
 const setMonitor = on => document.body.classList.toggle("monitor", on);
 
 // Spoken alerts need a sound first, so a propped-up phone gets noticed. Both start from a tap.
@@ -150,7 +164,7 @@ async function loop() {
     const { blob, diff } = await grab();
     const fd = new FormData();
     fd.append("session", session); fd.append("image", blob, "f.jpg"); fd.append("diff", diff);
-    const clip = roomMic?.wav(ROOM_SECONDS);
+    const clip = roomClip();
     if (clip) fd.append("audio", clip, "room.wav");
     if (hearingOn) { fd.append("heard", JSON.stringify({ ms: hearMs, scores: topScores(peak) })); peak = {}; }
     const res = await fetch("/api/tick", { method: "POST", body: fd });

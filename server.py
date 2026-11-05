@@ -105,11 +105,13 @@ def validate_spec(o, sentence):
         duration = max(0.0, min(120.0, float(o.get("duration_s") or 0)))
     except (TypeError, ValueError):
         return None
+    uses_sound = o.get("uses_sound") is True
+    if uses_sound: subjects = []  # someone out of view can still be heard, so the camera must never block a sound rule
     title = o.get("title") if isinstance(o.get("title"), str) and o["title"].strip() else sentence
     return {"title": title.strip()[:60], "sentence": sentence, "subjects": subjects, "question": q.strip(), "duration_s": duration,
             "conditions": valid_conditions(o.get("conditions"), subjects),
             "sound_labels": [x for x in o.get("sound_labels") or [] if x in meta.SOUND_LABELS][:5] if isinstance(o.get("sound_labels"), list) else [],
-            "uses_sound": o.get("uses_sound") is True, "uses_motion": o.get("uses_motion") is True}
+            "uses_sound": uses_sound, "uses_motion": o.get("uses_motion") is True}
 
 
 def parse_heard(raw):
@@ -299,15 +301,15 @@ def ear_answer(spec, heard):  # plain code decides; no model is asked
     return {"yes": False, "note": f"Listening for {spec['sound_labels'][0].lower()}. Not hearing it."}
 
 
-def explain_later(S, i, spec, alert):
+def explain_later(S, i, spec, alert, recognized=None):
     """Wonder writes the explanation in the background, so a slow answer never holds up the alert."""
     S["stages"]["confirm"] = {"model": meta.JUDGE, "state": "waiting", "ms": None}
     frames, audio, heard, t0 = list(S["frames"]), S["audio"], alert["say"], time.time()
 
     def work():
         try:
-            v = meta.confirm(spec["question"], frames, heard, S["led"], audio=audio, recognized=heard)
-            S["expl"][i] = alert["say"] = v["explanation"]
+            v = meta.confirm(spec["question"], frames, heard, S["led"], audio=audio, recognized=recognized)
+            S["expl"][i] = alert["say"] = v["explanation"] if v["confirm"] else f"A second look couldn't confirm this. {v['explanation']}"
             S["stages"]["confirm"] = {"model": meta.JUDGE, "state": "ok", "ms": meta.now_ms(t0)}
         except Exception as e:
             print(f"Wonder explanation failed: {meta.describe(e)}")
@@ -350,7 +352,7 @@ def run_check(S, jpg, diff, now, fast=False):
         see = "unavailable" if S["sam_ok"] is False else "ok" if S["sam_ok"] else "waiting"
         fresh = {k: S["counts"][k] for k in S["counts"] if now - S["seen_at"].get(k, 0) <= FRESH_S}
         boxes = [{"label": k, "box": b} for k in fresh for b in S["boxes"][k]]
-        if not any(not by_ear(S, s) for s in specs): see = "idle"  # nothing to look at when sound decides every rule
+        if not any(s.get("subjects") and not by_ear(S, s) for s in specs): see = "idle"  # no rule needs object counts
         stages["see"] = {"model": meta.SEG, "state": see, "ms": S["sam_ms"], "counts": fresh, "overruled": False}
 
     if S.get("heard"):
@@ -369,12 +371,12 @@ def run_check(S, jpg, diff, now, fast=False):
             if yes and (why := unmet_condition(s, S["counts"], S["seen_at"], now)):
                 yes, note, stages["see"]["overruled"] = False, why, True
             state, held = timer.step(yes, t)
-            if state == "due" and by_ear(S, s):  # the recognizer decided, so alert now; Wonder explains afterward
+            if state == "due" and (by_ear(S, s) or s.get("uses_sound")):  # sound can't wait: alert now, Wonder explains afterward
                 timer.confirmed(t, SOUND_ALERT_HOLD_S, SOUND_REARM_S)
                 S["expl"][i], state = note, "alert"
                 alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": note, "t": t, "at": round(now * 1000)}
                 S["log"].append(alert); new.append(alert)
-                explain_later(S, i, s, alert)
+                explain_later(S, i, s, alert, recognized=note if by_ear(S, s) else None)
             elif state == "due":
                 t0 = time.time()
                 try:

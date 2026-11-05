@@ -419,6 +419,43 @@ class HearingTests(unittest.TestCase):
         spark.assert_called_once()
 
 
+class SpeechRuleTests(unittest.TestCase):
+    def setUp(self):
+        self.S = session(0)
+        self.S["specs"][0]["uses_sound"] = True
+        self.S["audio"] = b"RIFFxxxxWAVE"
+
+    def test_alerts_at_once_and_a_second_call_after_a_gap_alerts_again(self):
+        S = self.S
+        def check(answer, t):
+            with mock.patch.object(meta, "check_frame", return_value=yes(answer)), mock.patch.object(server, "start_sam"), \
+                 mock.patch.object(server, "explain_later") as later:
+                out = server.run_check(S, b"j", 1, t)
+            return out, later
+        first, later = check(True, 3)
+        self.assertEqual(first["cards"][0]["status"], "alert")
+        later.assert_called_once()
+        self.assertEqual(check(True, 6)[0]["new_alerts"], [])    # still the same call
+        self.assertEqual(check(False, 9)[0]["cards"][0]["status"], "alert")
+        second = check(True, 12)[0]
+        self.assertEqual([a["id"] for a in second["new_alerts"]], [2])
+
+    def test_the_camera_can_never_block_a_sound_rule(self):
+        s = server.validate_spec({**SpecTests.good, "uses_sound": True, "conditions": [{"subject": "cup", "min": 1}]}, "s")
+        self.assertEqual((s["subjects"], s["conditions"]), ([], []))
+
+    def test_wonder_disagreeing_is_shown_not_hidden(self):
+        class NowPool:
+            def submit(self, fn): fn()
+        self.S["frames"].append(b"j")
+        alert = {"say": "Heard a call"}
+        with mock.patch.object(server, "compile_pool", NowPool()), \
+             mock.patch.object(meta, "confirm", return_value={"confirm": False, "explanation": "Only music."}):
+            server.explain_later(self.S, 0, self.S["specs"][0], alert)
+        self.assertIn("couldn't confirm", alert["say"])
+        self.assertIn("Only music.", alert["say"])
+
+
 class SoundTests(unittest.TestCase):
     def test_sound_rule_gets_the_clip_and_is_never_skipped_as_still(self):
         S = session()
