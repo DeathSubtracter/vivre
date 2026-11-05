@@ -141,20 +141,3 @@ def log_visible_models():
         print("Models this server can see:", sorted(m.id for m in client.models.list().data))
     except Exception as e:
         print(f"Couldn't list models: {describe(e)}")
-
-
-def probe_calls():
-    """Temporary: which model and call style answers from this server. Tiny requests only."""
-    def attempt(label, fn):
-        try:
-            fn(); print(f"PROBE ok   {label}")
-        except Exception as e:
-            print(f"PROBE FAIL {label}: {describe(e)[:160]}")
-    for m in ("muse-spark-1.2", "muse-spark-1.3", "muse-spark-1.1", "muse-wonder-1.0"):
-        attempt(f"{m} responses", lambda: client.responses.create(model=m, input="Say ok", max_output_tokens=16))
-    attempt("muse-spark-1.2 responses+effort", lambda: client.responses.create(
-        model="muse-spark-1.2", input="Say ok", max_output_tokens=16, reasoning={"effort": "low"}))
-    attempt("muse-spark-1.3 responses+effort", lambda: client.responses.create(
-        model="muse-spark-1.3", input="Say ok", max_output_tokens=16, reasoning={"effort": "low"}))
-    attempt("muse-spark-1.2 chat", lambda: client.chat.completions.create(
-        model="muse-spark-1.2", messages=[{"role": "user", "content": "Say ok"}], max_tokens=16))

@@ -40,7 +40,7 @@ ACTIVE_S = 20            # a session with no check for this long doesn't count a
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 if os.getenv("RAILWAY_ENVIRONMENT_NAME"):  # on the host only, so tests stay offline
-    threading.Thread(target=lambda: (meta.log_visible_models(), meta.probe_calls()), daemon=True).start()
+    threading.Thread(target=meta.log_visible_models, daemon=True).start()
 budget = Budget(PER_SESSION_USD, PER_IP_USD_DAY, GLOBAL_USD_TOTAL, os.getenv("SPEND_FILE", "/tmp/vivre_spend.json"))
 limiter = RateLimiter()
 sessions, sessions_lock = {}, threading.Lock()
@@ -102,7 +102,7 @@ def friendly(e):
 
 
 def sample_reply(reason):
-    return {"sample": True, "reason": f"{reason} Here's the recorded sample instead."}
+    return {"sample": True, "reason": f"{reason} Here's the sample instead."}
 
 
 class Start(BaseModel):
@@ -136,6 +136,8 @@ def start(body: Start, request: Request):
         raw = list(compile_pool.map(lambda r: meta.compile_rule(r, led), rules))
     except Exception as e:
         print(f"Rule compile failed: {meta.describe(e)}")
+        if getattr(e, "status_code", None) == 404:  # Meta isn't offering models to this server right now
+            return sample_reply("Live watching can't reach Meta's models from this server right now.")
         raise HTTPException(502, friendly(e))
     specs = [validate_spec(o, r) for o, r in zip(raw, rules)]
     for s, r in zip(specs, rules):
@@ -150,7 +152,7 @@ def start(body: Start, request: Request):
          "stages": {"understand": {"model": meta.COMPILER, "state": "ok", "ms": ms}}}
     with sessions_lock: sessions[sid] = S
     return {"session": sid, "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"]} for s, r in zip(specs, rules)],
-            "ledger": led.report(), "total": round(led.total, 4)}
+            "ledger": led.report(), "total": round(led.total, 4), "stages": S["stages"]}
 
 
 def sam_one(S, phrase, jpg):

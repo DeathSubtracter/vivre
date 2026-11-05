@@ -55,3 +55,16 @@ th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
 .monitor header{display:none}
 .monitor .setup{display:none}
 @media (min-width:800px){.monitor .tray{grid-column:2;grid-row:1}}
+
+/* The pipeline strip: one stage per model job. A stage is only coloured once it has done something. */
+.strip{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+@media (min-width:560px){.strip{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.stage{display:flex;flex-direction:column;gap:1px;background:var(--stock);border:1px solid var(--line);border-top:3px solid var(--line);border-radius:4px;padding:8px 10px;min-width:0;font-size:13px;line-height:1.3;transition:border-color .3s ease}
+.stage strong{font:700 15px "Bricolage Grotesque",system-ui,sans-serif}
+.stage .model{font:500 12px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-height:1.3em}
+.stage .job{color:var(--mute)}
+.stage .time{font:700 13px "Bricolage Grotesque",system-ui,sans-serif;margin-top:auto;padding-top:4px;color:var(--mute)}
+.stage.ok{border-top-color:var(--ok)}.stage.ok .time{color:var(--ok)}
+.stage.waiting{border-top-color:var(--warn)}.stage.waiting .time{color:var(--warn)}
+.stage.failed,.stage.unavailable{border-top-color:var(--alert)}.stage.failed .time,.stage.unavailable .time{color:var(--alert)}
+@media (prefers-reduced-motion:reduce){.stage{transition:none}}

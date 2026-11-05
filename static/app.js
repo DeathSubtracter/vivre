@@ -1,13 +1,36 @@
+import { stripHtml } from "./strip.js";
+
 const $ = s => document.querySelector(s);
 const INTERVAL = 3000, MAX_RULES = 3, MAX_HISTORY = 40, MAX_FAILS = 3;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const vid = $("#cam"), cv = document.createElement("canvas"), sm = document.createElement("canvas");
 sm.width = sm.height = 16;
-let stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
+let audio, wake, stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
 
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
 const setMonitor = on => document.body.classList.toggle("monitor", on);
+
+// Spoken alerts need a sound first, so a propped-up phone gets noticed. Both start from a tap.
+function chime() {
+  if (!audio) return;
+  [660, 880].forEach((f, i) => {
+    const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + i * 0.18;
+    o.frequency.value = f; g.gain.setValueAtTime(0.15, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.3);
+  });
+}
+async function keepAwake() {
+  try { wake = await navigator.wakeLock?.request("screen"); } catch { wake = null; }
+}
+document.addEventListener("visibilitychange", () => {
+  if (running && document.visibilityState === "visible") keepAwake();
+});
+function unlockSound() {
+  if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  const AC = window.AudioContext || window.webkitAudioContext;
+  try { audio = audio || (AC ? new AC() : null); audio?.resume(); } catch { audio = null; }
+}
 
 // Camera
 function cameraHelp(e) {
@@ -80,6 +103,7 @@ async function loop() {
     render(d);
     history.push({ img: cv.toDataURL("image/jpeg", 0.5), d });
     if (history.length > MAX_HISTORY) history.shift();
+    if (d.new_alerts.length) chime();
     d.new_alerts.forEach(a => speak(`${a.title}. ${a.say}`));
     quietStatus(d);
   } catch (e) {
@@ -108,17 +132,16 @@ function render(d) {
     <h3>${esc(meta[i].title)}</h3><p class="say">“${esc(meta[i].sentence)}”</p>
     <p class="state">${stateText(c)}</p>
     ${c.note ? `<p class="note">${esc(c.note)}</p>` : ""}</article>`).join("");
+  $("#strip").innerHTML = d.stages ? stripHtml(d.stages, d.total) : "";
   if (!d.ledger) { $("#ledger").innerHTML = ""; return; }
   const rows = d.ledger.map(r => `<tr><td>${esc(r.model)}</td><td>${r.calls}</td><td>$${r.cost.toFixed(4)}</td></tr>`).join("");
-  const ms = Object.entries(d.stages || {}).filter(([, s]) => s.ms != null)
-    .map(([k, s]) => `${esc(k)}: ${s.state === "ok" ? `${(s.ms / 1000).toFixed(1)}s` : esc(s.state)}`).join(", ");
   $("#ledger").innerHTML = `<h2>Under the hood</h2><table><tr><th>Model</th><th>Calls</th><th>Est. cost</th></tr>${rows}</table>
-    <p class="fine">Last timings: ${ms || "none yet"}.</p>
     <p class="fine">${d.skipped ?? 0} still frames skipped with no model calls. Watched for ${Math.round(d.t ?? 0)}s.</p>`;
 }
 
 function stop() {
   running = false; session = null;
+  wake?.release().catch(() => {}); wake = null;
   setMonitor(false); $("#stop").hidden = true;
   if (!history.length) return;
   $("#rev").hidden = false; $("#rs").max = history.length - 1; $("#rs").value = history.length - 1;
@@ -141,7 +164,7 @@ $("#go").onclick = async () => {
   if (!rules.length) { say("Type a rule or tap an example first.", true); return; }
   if (rules.length > MAX_RULES) { say(`Use at most ${MAX_RULES} rules.`, true); return; }
   if (!$("#consent").checked) { say("Please confirm you're only filming people who agreed.", true); return; }
-  if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance("")); // unlocks speech on phones
+  unlockSound();
   say("Reading your rules…"); $("#go").disabled = true;
   try {
     const res = await fetch("/api/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules, consent: true }) });
@@ -149,8 +172,8 @@ $("#go").onclick = async () => {
     const d = await res.json();
     if (d.sample) { playSample(d.reason); return; }
     session = d.session; meta = d.cards; history = []; prev = null; fails = 0; running = true;
-    $("#rev").hidden = true; setMonitor(true); $("#stop").hidden = false;
-    render({ cards: meta.map(m => ({ status: "ok", held: 0, need: m.need, note: "" })), ledger: d.ledger, t: 0, skipped: 0 });
+    $("#rev").hidden = true; setMonitor(true); $("#stop").hidden = false; keepAwake();
+    render({ cards: meta.map(m => ({ status: "ok", held: 0, need: m.need, note: "" })), ledger: d.ledger, t: 0, skipped: 0, stages: d.stages, total: d.total });
     say("Watching. Checks run every few seconds.");
     if (vid.ended) { vid.currentTime = 0; vid.play(); }
     loop();
@@ -173,12 +196,12 @@ async function playSample(reason) {
     say(reason || (s.clip ? s.label : ""));
     s.events.forEach(ev => sampleTimers.push(setTimeout(() => {
       render({ cards: ev.cards });
-      if (ev.speak) speak(ev.speak);
+      if (ev.speak) { chime(); speak(ev.speak); }
     }, ev.t * 1000)));
   } catch (e) { say("The sample couldn't load. Try reloading the page.", true); }
 }
 $("#sample").onclick = () => {
-  if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  unlockSound();
   history = []; playSample();
 };
 
