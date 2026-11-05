@@ -40,7 +40,7 @@ ACTIVE_S = 20            # a session with no check for this long doesn't count a
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 if os.getenv("RAILWAY_ENVIRONMENT_NAME"):  # on the host only, so tests stay offline
-    threading.Thread(target=meta.log_visible_models, daemon=True).start()
+    threading.Thread(target=lambda: (meta.log_visible_models(), meta.probe_calls()), daemon=True).start()
 budget = Budget(PER_SESSION_USD, PER_IP_USD_DAY, GLOBAL_USD_TOTAL, os.getenv("SPEND_FILE", "/tmp/vivre_spend.json"))
 limiter = RateLimiter()
 sessions, sessions_lock = {}, threading.Lock()
