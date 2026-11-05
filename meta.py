@@ -7,7 +7,9 @@ from openai import BadRequestError, OpenAI
 load_dotenv()
 client = OpenAI(base_url=os.getenv("META_BASE_URL", "https://api.meta.ai/v1"),
                 api_key=os.getenv("MODEL_API_KEY", "missing").strip(),
-                timeout=float(os.getenv("MODEL_TIMEOUT_S", "25")), max_retries=1)
+                timeout=float(os.getenv("MODEL_TIMEOUT_S", "25")), max_retries=1,
+                # a fresh connection per call: a reused one can stay on a Meta server answering "model not found", so retries never escape it
+                default_headers={"Connection": "close"})
 COMPILER = os.getenv("COMPILER_MODEL", "muse-spark-1.2")  # also the per-check watcher
 JUDGE = os.getenv("JUDGE_MODEL", "muse-wonder-1.0")       # confirms and explains alerts
 SEG = os.getenv("SEG_MODEL", "sam-3.1")
