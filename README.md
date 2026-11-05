@@ -1,14 +1,26 @@
 # Vivre
 
-Describe what to watch for in a sentence. Vivre watches a camera and speaks up when it happens.
+Most accidents aren't surprises, they're unwatched.
 
-**Try it:** https://web-production-749fb.up.railway.app (allow the camera, then pick or type a rule)
+Vivre lets you say or type what to watch for, in one plain sentence. It keeps watch through your camera and microphone, and speaks up when it happens. There's nothing to install, and it runs in a browser.
 
-Built for the Meta Global AI Developer Hackathon. All of the code in this repository was written during the event (Nov 3 to 4, 2026), except as noted below. Built with Claude; the models are Meta's, apart from the sound recognizer below.
-
-**Added after the submission deadline (6:00 PM PT, Nov 4):** the in-browser sound recognizer and the changes that support it. The submitted demo video doesn't show them. Commit dates show exactly what changed and when.
+**Try it:** https://web-production-749fb.up.railway.app (the hosted link can fail at times, see [Limits](#limits))
 
 **Vivre is a prototype, not a safety device.** It checks every few seconds and can miss things or get things wrong. It complements smoke alarms and medical-alert gear and doesn't replace them.
+
+Built for the Meta Global AI Developer Hackathon. Built with Claude; the models are Meta's, apart from the sound recognizer noted below.
+
+## What can Vivre do?
+
+- Turn any sentence, typed or spoken, into a rule you can read on its card
+- Watch for things in view, like "Tell me if a cup is left on the table for 10 seconds"
+- Listen for speech, like "Tell me if someone calls for help"
+- Recognize everyday sounds, like clapping or a baby crying
+- Time how long something lasts, with plain code, not a model
+- Alert you with a chime, a spoken explanation and a red card
+- Keep a log of alerts, each with its time and a short replay clip
+- Send alerts to a second device through a private link, without sharing the video or sound
+- Show which model did what, how long it took and what it cost
 
 ## How it works
 
@@ -18,38 +30,61 @@ flowchart LR
   H --> R[A sentence]
   R --> C[Muse Spark: compile to a validated rule]
   C --> S[FastAPI server]
-  B[Browser camera and, for sound rules, microphone] -->|a frame every few seconds| S
+  B[Browser camera and microphone] -->|a frame every few seconds| S
+  B --> Y[YAMNet in the browser: everyday sounds]
   S --> M[SAM 3.1: find, count and box objects]
-  S --> J[Muse Spark: yes or no per rule, from picture and sound]
-  M -->|counts inform the next check| J
-  M -->|boxes| O[Drawn on the live video]
-  J --> G[Plain code: SAM's count conditions can overrule Spark]
-  M --> G
-  G --> T[Plain-code timers]
-  T -->|rule comes due| W[Muse Wonder: confirm or reject, and explain]
+  S --> J[Muse Spark: yes or no, from picture and speech]
+  M -->|counts can overrule Spark| T[Plain-code timers]
+  J --> T
+  Y --> T
+  T -->|a rule fires| W[Muse Wonder: confirm or explain]
   W --> A[Vivre Card turns red, chime and spoken alert]
 ```
 
-- **Muse Voice Transcribe** turns a spoken rule into text you can check and edit. Typing works too.
-- **Muse Spark** compiles each sentence into a structured rule, shown on its card: the question, the objects to look for, the counts that must hold, how long it must last, and whether it needs sound or motion. Then it answers the question on each check, from the picture and, for sound rules, the last few seconds of sound.
-- **SAM 3.1** finds the objects a rule names and draws them on the video. Its counts aren't just a hint: "nobody at the desk" compiles to "0 person", and if SAM sees a person, plain code overrules Spark's yes. It runs beside the checks, so it doesn't slow them down.
-- **Plain Python timers** decide when "for 10 seconds" has passed, so timing isn't left to a model.
-- **Muse Wonder** only runs when a rule comes due. It looks at the last few frames, listens if the rule uses sound, and explains the alert in one plain sentence, or rejects it.
-- **YAMNet, by Google, not a Meta model,** recognizes everyday sounds like clapping, crying and alarms. It runs in the browser through MediaPipe, once a second. Muse Spark picks which sounds a rule needs, plain code fires the alert, and Muse Wonder writes the explanation afterward.
-- Still frames skip the model calls to save money.
-- **Alerts reach another device.** While watching, "Get alerts on another device" makes a private link. That device gets the cards, the alert log, a chime and the spoken alert, but never the video or sound.
+| Model | Job |
+|---|---|
+| **Muse Voice Transcribe** | Turns a spoken rule into text you can check and edit |
+| **Muse Spark 1.2** | Compiles each sentence into a structured rule, then answers its question on each check, from the picture and any speech |
+| **SAM 3.1** | Finds the objects a camera rule names and draws them on the video. Its counts can decide: "nobody at the desk" compiles to "0 person", and if SAM sees a person, plain code overrules Spark's yes |
+| **Muse Wonder 1.0** | Confirms camera alerts before they fire, and explains sound alerts just after |
+| **YAMNet (Google, not a Meta model)** | Recognizes sounds like clapping in the browser, because Spark and Wonder often missed non-speech sounds in our tests |
 
-## Privacy and limits
+Still frames skip the model calls to save money. Sound rules never use SAM, so someone out of view can still be heard.
 
-- Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never writes them to disk. Only film people who agreed.
-- The microphone only turns on for a spoken rule or a rule about sounds. The recognizer runs on your device, but those few seconds of sound also go to Meta's API and are treated the same way as frames.
-- Each check takes a few seconds, so Vivre won't catch something that is over in a moment.
-- It has only been tried on a few simple scenes. Expect false alarms and misses. A SAM miss can also hold back a real alert, because a rule won't fire if SAM can't find what it requires.
-- Sound rules: speech goes through Muse Spark and Muse Wonder, which often missed other sounds in our tests. Sounds like clapping or a crying baby are decided by the YAMNet recognizer in the browser. These worked in one informal test each, with real clapping and a baby crying video. Expect misses and false alarms.
-- Motion rules compare two frames a few seconds apart, so quick movements can be missed.
-- Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
-- Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, live watching stops and the app says why.
-- **The hosted link may not work at times.** On Nov 4, Meta's API often answered calls from the hosted server with "model not found", for long stretches, while the same calls from a laptop worked. The cause isn't known. When this happens, Vivre retries for about a minute and then says so. Running it locally (see below) avoids this.
+## Safety and privacy
+
+### What Vivre can access
+
+- **Camera:** only after you turn it on, and only while the page is open.
+- **Microphone:** only for a spoken rule or a rule about sounds. Other rules never turn it on.
+- Nothing else on your device. Vivre has no accounts, and it doesn't identify anyone. Its prompts tell the models not to say who someone is or how they look.
+
+### Where your data goes
+
+- **To Meta's API:** one camera frame for each check, and the last few seconds of sound for speech rules. Vivre uses Meta's standard tier, not the cheaper contributor tier, whose content may be used for training.
+- **On the server:** the last few frames and the latest sound clip stay in memory during a session. They're never written to disk or logged.
+- **In your browser:** alert clips and the session review stay there until you close the tab or start again, unless you download them.
+- **The sound recognizer** runs on your device, though sound rules also send clips to Meta's API as above.
+- **A second device** gets the cards and alerts, never the video or sound. Anyone with the private link can see them while the session runs.
+- **Fonts** load from Google Fonts, so your browser contacts Google when the page opens.
+
+Only film people who agreed. Live use is capped per session, per visitor and overall, to limit spending.
+
+## Limits
+
+- It checks every few seconds, so it won't catch something that's over in a moment. Motion rules compare two frames a few seconds apart.
+- It has only been tried informally on a few simple scenes. Expect false alarms and misses. A SAM miss can hold back a camera alert, because a rule won't fire if SAM can't find what it requires.
+- Speech and sound recognition can fail in noisy rooms. Sound alerts fire on the recognizer or Spark alone, and Wonder's check comes afterward.
+- Vivre can't hear calls while it's speaking an alert.
+- Alerts need the page open. It doesn't send phone notifications, and it isn't connected to any camera system.
+- On iPhone, the spoken alert has been unreliable while the microphone is on.
+- **The hosted link may not work at times.** On Nov 4, Meta's API often answered the hosted server with "model not found", for long stretches, while the same calls from a laptop worked. The cause isn't known. The six example rules start without Meta's API, but only clapping and crying keep working during those periods. Running it locally avoids this.
+
+## What was built when
+
+The core app was written during the hackathon, on Nov 3 and 4, 2026, and the submitted demo video shows that version.
+
+**Added after the submission deadline (6:00 PM PT, Nov 4), and not in the submitted video:** the in-browser sound recognizer, saved example rules, repeat alerts, real clock times, replay clips, faster sound alerts, fixes for Safari and iPhone, and the redesigned screen. Commit dates show exactly what changed and when.
 
 ## Run it
 
@@ -64,4 +99,4 @@ Hosted, set `MODEL_API_KEY` and `TRUST_PROXY=1` in the host's settings. `.env.ex
 
 ## Third-party files
 
-`static/vendor/` holds Google's MediaPipe audio library (`@mediapipe/tasks-audio`, Apache-2.0) and the YAMNet model. See `static/vendor/README.txt`.
+`static/vendor/` holds Google's MediaPipe audio library (`@mediapipe/tasks-audio`, Apache-2.0) and the YAMNet model. See `static/vendor/README.txt`. The redesign used the audit method from [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky (CC BY 4.0).

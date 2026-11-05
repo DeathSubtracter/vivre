@@ -150,3 +150,8 @@ td:first-child{font-family:var(--mono);font-size:12px;color:var(--soft)}
 #clipt{margin:8px 0 0;font:400 15px/1.4 var(--serif)}
 #clipd{display:inline-block;margin-right:12px;color:var(--text);font-size:15px}
 .stub{display:block}
+
+.about{margin-top:32px;padding-top:16px;border-top:1px solid var(--hair);max-width:68ch}
+.about h2{font:500 15px/1.3 var(--sans);color:var(--soft);margin:0 0 8px}
+.about p{margin:0 0 8px;font:400 16px/1.5 var(--serif);color:var(--soft)}
+.monitor .about,.viewer .about{display:none}
