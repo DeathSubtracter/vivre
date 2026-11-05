@@ -177,7 +177,7 @@ function planText(m) {
   if (m.subjects?.length) parts.push(`SAM looks for: ${m.subjects.join(", ")}.`);
   if (need.length) parts.push(`Only counts if SAM sees ${need.join(" and ")}.`);
   if (m.need) parts.push(`Must last ${Math.round(m.need)}s.`);
-  if (m.uses_sound) parts.push("Listens with the microphone.");
+  if (m.uses_sound) parts.push("Listens with the microphone. It hears speech well, but other sounds are unreliable.");
   return parts.join(" ");
 }
 function clock(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
