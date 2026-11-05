@@ -80,6 +80,20 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(meta.jparse('text {"a":1} text'), {"a": 1})
 
 
+class CompileTests(unittest.TestCase):
+    good = {"question": "Is a cup there?", "subjects": ["cup"], "duration_s": 1}
+
+    def test_a_bad_reply_gets_one_retry(self):
+        with mock.patch.object(meta, "compile_rule", side_effect=[None, self.good]) as c:
+            self.assertEqual(server.compile_valid("s", None)["question"], "Is a cup there?")
+        self.assertEqual(c.call_count, 2)
+
+    def test_gives_up_after_two_bad_replies(self):
+        with mock.patch.object(meta, "compile_rule", return_value=None) as c:
+            self.assertIsNone(server.compile_valid("s", None))
+        self.assertEqual(c.call_count, 2)
+
+
 class BudgetTests(unittest.TestCase):
     def test_each_cap_trips(self):
         b = Budget(0.5, 2, 3)
@@ -112,7 +126,7 @@ def session(need=6):
     spec = {"title": "T", "subjects": [], "question": "Q?", "duration_s": need}
     return {"specs": [spec], "timers": [RuleTimer(need)], "expl": [""], "t0": 0, "seen": 0, "last": None, "last_call": 0,
             "last_tick": 0, "n": 0, "led": meta.Ledger(), "ip": "x", "frames": __import__("collections").deque(maxlen=3),
-            "counts": {}, "sam_pending": 0, "sam_ok": None, "sam_ms": None, "lock": threading.Lock(), "out": None,
+            "counts": {}, "seen_at": {}, "boxes": {}, "audio": None, "sam_pending": 0, "sam_ok": None, "sam_ms": None, "lock": threading.Lock(), "out": None,
             "cards": [{"status": "ok", "held": 0, "need": need, "note": ""}], "stages": {}}
 
 
@@ -188,6 +202,70 @@ class CheckFlowTests(unittest.TestCase):
             server.sam_pool.shutdown(wait=True)  # finish inside the stub so nothing reaches the network
             server.sam_pool = pool()
         self.assertEqual(out["stages"]["see"]["state"], "unavailable")
+
+
+class SamDecidesTests(unittest.TestCase):
+    def test_boxes_are_scaled_to_the_frame(self):
+        one = "<|box;x1=160;y1=120;x2=480;y2=360;w=640;h=480;c=0.9|><|mask;x=0;y=0;data=1,1,~a|>"
+        self.assertEqual(meta.parse_boxes(f"<0f>0{one}"), [[0.25, 0.25, 0.75, 0.75]])
+        self.assertEqual(meta.parse_boxes(""), [])
+
+    def test_conditions_are_validated(self):
+        s = server.validate_spec({**SpecTests.good, "conditions": [
+            {"subject": "cup", "min": 1}, {"subject": "ghost", "min": 1}, {"subject": "cup", "max": "no"}, "x",
+            {"subject": "cup", "max": 99}]}, "s")
+        self.assertEqual(s["conditions"], [{"subject": "cup", "min": 1, "max": None}])
+        self.assertFalse(s["uses_sound"])
+
+    def test_sam_can_overrule_spark(self):
+        S = session(0)
+        S["specs"][0]["conditions"] = [{"subject": "cup", "min": 1, "max": None}]
+        S["counts"], S["seen_at"], S["boxes"] = {"cup": 0}, {"cup": 3}, {"cup": []}
+        with mock.patch.object(meta, "check_frame", return_value=yes(True)), \
+             mock.patch.object(meta, "confirm") as c, mock.patch.object(server, "start_sam"):
+            out = server.run_check(S, b"j", 1, 3)
+        self.assertEqual(out["cards"][0]["status"], "ok")
+        self.assertIn("SAM counts 0 cup", out["cards"][0]["note"])
+        self.assertTrue(out["stages"]["see"]["overruled"])
+        c.assert_not_called()
+
+    def test_stale_counts_decide_nothing(self):
+        spec = {"conditions": [{"subject": "person", "min": None, "max": 0}]}
+        self.assertIsNone(server.unmet_condition(spec, {"person": 1}, {"person": 0}, server.FRESH_S + 1))
+        self.assertIn("person", server.unmet_condition(spec, {"person": 1}, {"person": 0}, 1))
+
+    def test_fresh_boxes_are_returned_and_stale_ones_dropped(self):
+        S = session()
+        S["counts"], S["seen_at"], S["boxes"] = {"cup": 1, "pot": 1}, {"cup": 100, "pot": 1}, {"cup": [[0, 0, 1, 1]], "pot": [[0, 0, 1, 1]]}
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)), mock.patch.object(server, "start_sam"):
+            out = server.run_check(S, b"j", 1, 101)
+        self.assertEqual([b["label"] for b in out["boxes"]], ["cup"])
+
+
+class SoundTests(unittest.TestCase):
+    def test_sound_rule_gets_the_clip_and_is_never_skipped_as_still(self):
+        S = session()
+        S["specs"][0]["uses_sound"], S["audio"] = True, b"RIFFxxxxWAVE"
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)) as c, mock.patch.object(server, "start_sam"):
+            server.run_check(S, b"j", 1, 3)
+            server.run_check(S, b"j", 0, 6)
+        self.assertEqual(c.call_count, 2)
+        self.assertEqual(c.call_args.kwargs["audio"], b"RIFFxxxxWAVE")
+
+    def test_other_rules_never_send_sound(self):
+        S = session()
+        S["audio"] = b"RIFFxxxxWAVE"
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)) as c, mock.patch.object(server, "start_sam"):
+            server.run_check(S, b"j", 1, 3)
+        self.assertIsNone(c.call_args.kwargs["audio"])
+
+    def test_motion_rule_sends_two_frames(self):
+        S = session()
+        S["specs"][0]["uses_motion"] = True
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)) as c, mock.patch.object(server, "start_sam"):
+            server.run_check(S, b"a", 1, 3)
+            server.run_check(S, b"b", 1, 6)
+        self.assertEqual(c.call_args.args[1], [b"a", b"b"])
 
 
 if __name__ == "__main__":

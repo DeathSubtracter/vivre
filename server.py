@@ -25,7 +25,7 @@ from timers import RuleTimer
 def env_f(name, default): return float(os.getenv(name, default))
 
 
-PER_SESSION_USD = env_f("PER_SESSION_USD", 0.50)
+PER_SESSION_USD = env_f("PER_SESSION_USD", 0.75)
 PER_IP_USD_DAY = env_f("PER_IP_USD_DAY", 2)
 GLOBAL_USD_TOTAL = env_f("GLOBAL_USD_TOTAL", 60)
 MAX_SESSION_MIN = env_f("MAX_SESSION_MIN", 4)
@@ -34,6 +34,8 @@ SAMPLE_ONLY = os.getenv("SAMPLE_ONLY", "0") == "1"
 TRUST_PROXY = os.getenv("TRUST_PROXY", "0") == "1"  # set on the host, where a proxy sets X-Real-IP
 
 MAX_RULES, MAX_RULE_CHARS, MAX_FRAME_BYTES, MAX_BODY_BYTES = 3, 200, 300_000, 1_000_000
+MAX_CLIP_BYTES, MAX_SPOKEN_BYTES = 200_000, 600_000  # about 6 s of room sound, about 18 s of speech, as 16 kHz WAV
+FRESH_S = 12             # SAM's counts and boxes older than this don't decide anything
 MIN_CHECK_S = 2.9        # no session checks faster than every 3 seconds
 STILL_DIFF, STILL_MAX_S = 0.015, 12  # still frames reuse the last answer, up to this long
 ACTIVE_S = 20            # a session with no check for this long doesn't count as running
@@ -71,7 +73,12 @@ async def guard(request: Request, call_next):
     return r
 
 
+_proxy_logged = []
+
+
 def client_ip(request):
+    if TRUST_PROXY and not _proxy_logged:  # once, and without the address: is the visitor limit really per visitor?
+        _proxy_logged.append(1); print(f"Visitor address header present: {bool(request.headers.get('x-real-ip'))}")
     if TRUST_PROXY and (real := request.headers.get("x-real-ip")): return real.strip()
     return request.client.host if request.client else "unknown"
 
@@ -88,7 +95,30 @@ def validate_spec(o, sentence):
     except (TypeError, ValueError):
         return None
     title = o.get("title") if isinstance(o.get("title"), str) and o["title"].strip() else sentence
-    return {"title": title.strip()[:60], "subjects": subjects, "question": q.strip(), "duration_s": duration}
+    return {"title": title.strip()[:60], "subjects": subjects, "question": q.strip(), "duration_s": duration,
+            "conditions": valid_conditions(o.get("conditions"), subjects),
+            "uses_sound": o.get("uses_sound") is True, "uses_motion": o.get("uses_motion") is True}
+
+
+def valid_conditions(raw, subjects):
+    out = []
+    for c in raw if isinstance(raw, list) else []:
+        if not isinstance(c, dict) or c.get("subject") not in subjects: continue
+        lo, hi = c.get("min"), c.get("max")
+        ok = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 16
+        if ok(lo) or ok(hi):
+            out.append({"subject": c["subject"], "min": lo if ok(lo) else None, "max": hi if ok(hi) else None})
+    return out[:3]
+
+
+def unmet_condition(spec, counts, seen_at, now):
+    """Plain code, not a model: SAM's fresh count can overrule Spark's yes. Returns the reason, or None."""
+    for c in spec.get("conditions", []):
+        n = counts.get(c["subject"])
+        if n is None or now - seen_at.get(c["subject"], 0) > FRESH_S: continue
+        if (c["min"] is not None and n < c["min"]) or (c["max"] is not None and n > c["max"]):
+            return f"SAM counts {n} {c['subject']}, so this isn't happening."
+    return None
 
 
 def friendly(e):
@@ -108,6 +138,14 @@ def sample_reply(reason):
 class Start(BaseModel):
     rules: list[str]
     consent: bool = False
+
+
+def compile_valid(sentence, led):
+    """A model reply can come back empty or malformed, so it gets one more try before we bother the person."""
+    for _ in range(2):
+        spec = validate_spec(meta.compile_rule(sentence, led), sentence)
+        if spec: return spec
+    return None
 
 
 def drop_stale(now):
@@ -133,41 +171,46 @@ def start(body: Start, request: Request):
     led = meta.Ledger(on_cost=lambda c: budget.charge(ip, c))
     t0 = time.time()
     try:
-        raw = list(compile_pool.map(lambda r: meta.compile_rule(r, led), rules))
+        raw = list(compile_pool.map(lambda r: compile_valid(r, led), rules))
     except Exception as e:
         print(f"Rule compile failed: {meta.describe(e)}")
         if getattr(e, "status_code", None) == 404:  # Meta isn't offering models to this server right now
             return sample_reply("Live watching can't reach Meta's models from this server right now.")
         raise HTTPException(502, friendly(e))
-    specs = [validate_spec(o, r) for o, r in zip(raw, rules)]
+    specs = raw
     for s, r in zip(specs, rules):
         if s is None: raise HTTPException(422, f'Couldn\'t turn this into a rule, try rewording it: "{r[:80]}"')
     ms = meta.now_ms(t0)
     sid = uuid.uuid4().hex
     S = {"specs": specs, "timers": [RuleTimer(s["duration_s"]) for s in specs], "expl": [""] * len(specs),
          "t0": now, "seen": now, "last": None, "last_call": 0, "last_tick": 0, "n": 0, "led": led, "ip": ip,
-         "frames": deque(maxlen=3), "counts": {}, "sam_pending": 0, "sam_ok": None, "sam_ms": None,
+         "frames": deque(maxlen=3), "counts": {}, "seen_at": {}, "boxes": {}, "audio": None,
+         "sam_pending": 0, "sam_ok": None, "sam_ms": None,
          "lock": threading.Lock(), "busy": threading.Lock(), "out": None,
          "cards": [{"status": "ok", "held": 0, "need": s["duration_s"], "note": ""} for s in specs],
          "stages": {"understand": {"model": meta.COMPILER, "state": "ok", "ms": ms}}}
     with sessions_lock: sessions[sid] = S
-    return {"session": sid, "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"]} for s, r in zip(specs, rules)],
+    return {"session": sid, "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
+                                       "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"]}
+                                      for s, r in zip(specs, rules)],
             "ledger": led.report(), "total": round(led.total, 4), "stages": S["stages"]}
 
 
 def sam_one(S, phrase, jpg):
     t0 = time.time()
-    n = meta.segment(jpg, phrase, S["led"])
+    boxes = meta.segment(jpg, phrase, S["led"])
     with S["lock"]:
         S["sam_pending"] -= 1
         S["sam_ms"] = meta.now_ms(t0)
-        S["sam_ok"] = n is not None
-        if n is not None: S["counts"][phrase] = n
+        S["sam_ok"] = boxes is not None
+        if boxes is not None:
+            S["counts"][phrase], S["boxes"][phrase], S["seen_at"][phrase] = len(boxes), boxes, time.time()
 
 
 def start_sam(S, jpg):
-    """SAM runs beside the check; its counts feed the next one, so it never slows a check down."""
-    subjects = sorted({x for s in S["specs"] for x in s["subjects"]})[:3]
+    """SAM runs beside the check; its results feed the next one, so it never slows a check down."""
+    wanted = [c["subject"] for s in S["specs"] for c in s.get("conditions", [])] + [x for s in S["specs"] for x in s["subjects"]]
+    subjects = list(dict.fromkeys(wanted))[:3]  # the ones that decide something come first
     with S["lock"]:
         if S["sam_pending"] or not subjects: return
         S["sam_pending"] = len(subjects)
@@ -178,18 +221,22 @@ def run_check(S, jpg, diff, now):
     """One check for one session. No HTTP here, so tests can run it with stubbed models."""
     t, led, specs = round(now - S["t0"], 1), S["led"], S["specs"]
     S["frames"].append(jpg)
-    reused = bool(S["last"]) and diff < STILL_DIFF and now - S["last_call"] < STILL_MAX_S
+    listen = S["audio"] if any(s.get("uses_sound") for s in specs) else None
+    # a still picture says nothing about a sound, so sound rules always get a real look
+    reused = bool(S["last"]) and not listen and diff < STILL_DIFF and now - S["last_call"] < STILL_MAX_S
     stages, problem = S["stages"], None
+    frames = list(S["frames"])[-2:] if any(s.get("uses_motion") for s in specs) else [jpg]
     if reused:
         answers = S["last"]; led.skipped += 1
     else:
         S["n"] += 1
-        if S["n"] % 2 == 1: start_sam(S, jpg)
+        start_sam(S, jpg)
         with S["lock"]: counts = ", ".join(f"{k} x{v}" for k, v in S["counts"].items())
         t0 = time.time()
         try:
-            answers = meta.check_frame([s["question"] for s in specs], jpg, counts, led)
-            stages["judge"] = {"model": meta.COMPILER, "state": "ok" if answers else "failed", "ms": meta.now_ms(t0)}
+            answers = meta.check_frame([s["question"] for s in specs], frames, counts, led, audio=listen)
+            stages["judge"] = {"model": meta.COMPILER, "state": "ok" if answers else "failed", "ms": meta.now_ms(t0),
+                               "sound": bool(listen)}
         except Exception as e:
             print(f"Spark check failed: {meta.describe(e)}")
             answers, problem = None, friendly(e)
@@ -200,18 +247,22 @@ def run_check(S, jpg, diff, now):
             problem = "Spark's answer wasn't usable on this check. Trying again."
     with S["lock"]:
         see = "unavailable" if S["sam_ok"] is False else "ok" if S["sam_ok"] else "waiting"
-        stages["see"] = {"model": meta.SEG, "state": see, "ms": S["sam_ms"], "counts": dict(S["counts"])}
+        fresh = {k: S["counts"][k] for k in S["counts"] if now - S["seen_at"].get(k, 0) <= FRESH_S}
+        boxes = [{"label": k, "box": b} for k in fresh for b in S["boxes"][k]]
+        stages["see"] = {"model": meta.SEG, "state": see, "ms": S["sam_ms"], "counts": fresh, "overruled": False}
 
     new = []
     if answers:  # with no usable answer the timers wait; a failed check isn't evidence either way
         cards = []
         for i, (s, a) in enumerate(zip(specs, answers)):
-            timer, note = S["timers"][i], a["note"]
-            state, held = timer.step(a["yes"], t)
+            timer, note, yes = S["timers"][i], a["note"], a["yes"]
+            if yes and (why := unmet_condition(s, S["counts"], S["seen_at"], now)):
+                yes, note, stages["see"]["overruled"] = False, why, True
+            state, held = timer.step(yes, t)
             if state == "due":
                 t0 = time.time()
                 try:
-                    v = meta.confirm(s["question"], list(S["frames"]), note, led)
+                    v = meta.confirm(s["question"], list(S["frames"]), note, led, audio=S["audio"] if s.get("uses_sound") else None)
                     stages["confirm"] = {"model": meta.JUDGE, "state": "ok", "ms": meta.now_ms(t0)}
                 except Exception as e:  # say so on screen and alert on Spark's word alone
                     print(f"Wonder confirm failed: {meta.describe(e)}")
@@ -228,11 +279,12 @@ def run_check(S, jpg, diff, now):
             cards.append({"status": "watch" if state == "due" else state, "held": held, "need": timer.need, "note": note})
         S["cards"] = cards
     return {"t": t, "cards": S["cards"], "new_alerts": new, "reused": reused, "skipped": led.skipped, "problem": problem,
-            "stages": stages, "ledger": led.report(), "total": round(led.total, 4)}
+            "stages": stages, "boxes": boxes, "ledger": led.report(), "total": round(led.total, 4)}
 
 
 @app.post("/api/tick")
-def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), image: UploadFile = File(...)):
+def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), image: UploadFile = File(...),
+         audio: UploadFile | None = File(None)):
     ip, now = client_ip(request), time.time()
     if not limiter.allow(f"tick:{ip}", 60, 60): raise HTTPException(429, "Too many checks. Wait a moment.")
     S = sessions.get(session)
@@ -240,6 +292,7 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
     jpg = image.file.read(MAX_FRAME_BYTES + 1)
     if len(jpg) > MAX_FRAME_BYTES: raise HTTPException(413, "That frame is too large.")
     if jpg[:3] != b"\xff\xd8\xff": raise HTTPException(400, "That frame isn't a JPEG image.")
+    clip = read_wav(audio, MAX_CLIP_BYTES) if audio else None
     if not S["busy"].acquire(blocking=False):  # the previous check is still running
         if S["out"]: return S["out"]
         raise HTTPException(429, "Still working on the first check.")
@@ -254,10 +307,35 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
             return sample_reply(reason)
         if S["out"] and now - S["last_tick"] < MIN_CHECK_S: return S["out"]
         S["last_tick"] = now
+        S["audio"] = clip  # only the latest few seconds, and only in memory
         S["out"] = run_check(S, jpg, diff, now)
         return S["out"]
     finally:
         S["busy"].release()
+
+
+def read_wav(upload, limit):
+    wav = upload.file.read(limit + 1)
+    if len(wav) > limit: raise HTTPException(413, "That sound clip is too long.")
+    if wav[:4] != b"RIFF" or wav[8:12] != b"WAVE": raise HTTPException(400, "That sound clip isn't a WAV file.")
+    return wav
+
+
+@app.post("/api/transcribe")
+def spoken_rule(request: Request, audio: UploadFile = File(...)):
+    ip = client_ip(request)
+    if not limiter.allow(f"voice:{ip}", 6, 60): raise HTTPException(429, "Too many recordings. Wait a minute, or type the rule.")
+    if SAMPLE_ONLY or (reason := budget.blocked(ip)): raise HTTPException(503, "Voice isn't available right now. Please type the rule.")
+    wav = read_wav(audio, MAX_SPOKEN_BYTES)
+    led, t0 = meta.Ledger(on_cost=lambda c: budget.charge(ip, c)), time.time()
+    try:
+        text = meta.transcribe(wav, led)
+    except Exception as e:
+        print(f"Voice Transcribe failed: {meta.describe(e)}")
+        raise HTTPException(502, "Voice Transcribe didn't answer. Please type the rule.")
+    if not text: raise HTTPException(422, "I didn't catch that. Try again, or type the rule.")
+    return {"text": text[:MAX_RULE_CHARS], "stage": {"model": meta.VOICE, "state": "ok", "ms": meta.now_ms(t0)},
+            "ledger": led.report(), "total": round(led.total, 6)}
 
 
 @app.get("/healthz")

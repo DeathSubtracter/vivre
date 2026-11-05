@@ -14,6 +14,7 @@ h2,h3,button,.status,select,summary{font-family:"Bricolage Grotesque",system-ui,
 .camera{position:relative;background:#000;border-radius:6px;overflow:hidden;aspect-ratio:4/3}
 video{width:100%;height:100%;object-fit:cover;display:block}
 .placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:var(--stock);color:var(--mute);font-style:italic}
+#boxes{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .status{min-height:1.5em;margin:10px 0 0;font-weight:500}
 .status.err{color:var(--alert)}
 
@@ -29,6 +30,8 @@ button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-vis
 button.chip{margin:0;min-height:40px;padding:6px 12px;background:var(--stock);color:var(--ink);border:1px solid var(--line);font-size:14px;font-weight:500;text-align:left}
 .consent{display:flex;gap:10px;align-items:center;font-weight:500}
 .consent input{width:22px;height:22px;flex:none}
+#talk{margin-top:8px}
+#talk.on{border-color:var(--alert);color:var(--alert)}
 #go{display:block;width:100%}
 #sample{display:block;width:100%;margin-top:8px}
 .more{margin-top:14px}
@@ -45,7 +48,13 @@ button.chip{margin:0;min-height:40px;padding:6px 12px;background:var(--stock);co
 .state{font:700 17px "Bricolage Grotesque",system-ui,sans-serif;color:var(--ok);margin:0}
 .watch .state{color:var(--warn)}.alert .state{color:var(--alert)}
 .note{margin:4px 0 0;font-size:15px}
+.plan{margin:10px 0 0;padding-top:8px;border-top:1px solid var(--line);color:var(--mute);font-size:13px;line-height:1.4}
 @media (prefers-reduced-motion:reduce){.card{transition:none}}
+
+/* The one big moment: the camera frame rings red when a rule fires, then stays outlined until it clears */
+.alerting .camera{outline:4px solid var(--alert);outline-offset:0;animation:ring 1s ease-out 3}
+@keyframes ring{from{outline-offset:12px;outline-color:transparent}to{outline-offset:0;outline-color:var(--alert)}}
+@media (prefers-reduced-motion:reduce){.alerting .camera{animation:none}}
 
 #ledger h2{font-size:18px;margin:22px 0 4px}
 table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
@@ -57,8 +66,7 @@ th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
 @media (min-width:800px){.monitor .tray{grid-column:2;grid-row:1}}
 
 /* The pipeline strip: one stage per model job. A stage is only coloured once it has done something. */
-.strip{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-@media (min-width:560px){.strip{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.strip{list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}
 .stage{display:flex;flex-direction:column;gap:1px;background:var(--stock);border:1px solid var(--line);border-top:3px solid var(--line);border-radius:4px;padding:8px 10px;min-width:0;font-size:13px;line-height:1.3;transition:border-color .3s ease}
 .stage strong{font:700 15px "Bricolage Grotesque",system-ui,sans-serif}
 .stage .model{font:500 12px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-height:1.3em}

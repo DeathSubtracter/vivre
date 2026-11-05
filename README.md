@@ -12,32 +12,39 @@ Built for the Meta Global AI Developer Hackathon. All of the code in this reposi
 
 ```mermaid
 flowchart LR
-  B[Browser camera] -->|one frame, about every 3 s| S[FastAPI server]
-  R[A sentence] --> C[Muse Spark: compile to a validated rule]
-  C --> S
-  S --> M[SAM 3.1: find and count objects]
-  M -->|counts feed the next check| J
-  S --> J[Muse Spark: yes or no per rule]
-  J --> T[Plain-code timers]
-  T -->|rule comes due| W[Muse Wonder: confirm and explain]
-  W --> A[Vivre Card turns red, spoken alert]
+  V[A spoken rule] --> H[Muse Voice Transcribe: speech to text]
+  H --> R[A sentence]
+  R --> C[Muse Spark: compile to a validated rule]
+  C --> S[FastAPI server]
+  B[Browser camera and, for sound rules, microphone] -->|a frame every few seconds| S
+  S --> M[SAM 3.1: find, count and box objects]
+  S --> J[Muse Spark: yes or no per rule, from picture and sound]
+  M -->|counts inform the next check| J
+  M -->|boxes| O[Drawn on the live video]
+  J --> G[Plain code: SAM's count conditions can overrule Spark]
+  M --> G
+  G --> T[Plain-code timers]
+  T -->|rule comes due| W[Muse Wonder: confirm or reject, and explain]
+  W --> A[Vivre Card turns red, chime and spoken alert]
 ```
 
-- **Muse Spark** turns each sentence into a rule, then answers its yes/no question on each check.
-- **SAM 3.1** finds and counts the objects a rule names. It runs beside the checks, so it doesn't slow them down.
+- **Muse Voice Transcribe** turns a spoken rule into text you can check and edit. Typing works too.
+- **Muse Spark** compiles each sentence into a structured rule, shown on its card: the question, the objects to look for, the counts that must hold, how long it must last, and whether it needs sound or motion. Then it answers the question on each check, from the picture and, for sound rules, the last few seconds of sound.
+- **SAM 3.1** finds the objects a rule names and draws them on the video. Its counts aren't just a hint: "nobody at the desk" compiles to "0 person", and if SAM sees a person, plain code overrules Spark's yes. It runs beside the checks, so it doesn't slow them down.
 - **Plain Python timers** decide when "for 10 seconds" has passed, so timing isn't left to a model.
-- **Muse Wonder** only runs when a rule comes due. It looks at the last few frames and explains the alert in one plain sentence, or rejects it.
+- **Muse Wonder** only runs when a rule comes due. It looks at the last few frames, listens if the rule uses sound, and explains the alert in one plain sentence, or rejects it.
 - Still frames skip the model calls to save money.
 
 ## Privacy and limits
 
 - Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never writes them to disk. Only film people who agreed.
+- The microphone only turns on for a spoken rule or a rule about sounds. Those few seconds of sound go to Meta's API and are treated the same way as frames.
 - Each check takes a few seconds, so Vivre won't catch something that is over in a moment.
-- It has only been tried on a few simple scenes. Expect false alarms and misses.
+- It has only been tried on a few simple scenes. Expect false alarms and misses. A SAM miss can also hold back a real alert, because a rule won't fire if SAM can't find what it requires.
+- Motion rules compare two frames a few seconds apart, so quick movements can be missed.
 - Spoken alerts need the page open. It doesn't send phone notifications and isn't connected to any camera system.
 - Live use is capped per session, per visitor and overall. When a cap is reached, or Meta's models can't be reached from the server, the app switches to a sample. For now that sample is a hand-written placeholder, and it's labeled as one.
 - The hosted server got "model not found" errors from Meta's API for part of Nov 4, then started working. The cause isn't known, so live watching on the link may occasionally fall back to the sample.
-- Sound isn't used yet. Early tests showed Muse Wonder accepting an image with a sound clip and Muse Voice Transcribe transcribing speech, but neither is in the app.
 
 ## Run it
 
@@ -46,6 +53,6 @@ flowchart LR
 3. Copy `.env.example` to `.env` and add your Meta Model API key. Never commit `.env`.
 4. `uvicorn server:app --reload`, then open http://localhost:8000 in Chrome or Safari.
 
-Tests use fake models, so they cost nothing: `python -m unittest discover tests`
+Tests use fake models, so they cost nothing: `python -m unittest discover tests` and `node --test tests/frontend.test.mjs`
 
 Hosted, set `MODEL_API_KEY` and `TRUST_PROXY=1` in the host's settings. `.env.example` lists the spending caps.
