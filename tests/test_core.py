@@ -84,7 +84,7 @@ class CompileTests(unittest.TestCase):
     def test_every_example_button_has_a_valid_saved_rule_and_skips_the_model(self):
         import re
         html = open(os.path.join(os.path.dirname(__file__), "..", "static", "index.html")).read()
-        chips = re.findall(r'class="chip"[^>]*>([^<]+)<', html)
+        chips = re.findall(r'data-rule="([^"]+)"', html)
         self.assertEqual(len(chips), 6)
         with mock.patch.object(meta, "compile_rule") as model:
             for chip in chips:

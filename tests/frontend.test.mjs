@@ -68,6 +68,13 @@ test("boxes follow the video's crop", () => {
   assert.deepEqual(wide([0.25, 0, 0.75, 1]), [0, 0, 640, 480]);
 });
 
+test("a stage no rule needs is left out, and real model names are shown", () => {
+  const html = stripHtml({ see: { model: "sam-3.1", state: "idle" }, judge: { model: "muse-spark-1.2", state: "ok", ms: 2000 } });
+  assert.ok(!html.includes("See"));
+  assert.ok(html.includes("Muse Spark 1.2"));
+  assert.ok(stripHtml({}).includes("standing by"));
+});
+
 test("strip shows Listen only when the recognizer is running", () => {
   assert.ok(!stripHtml({}).includes("Listen"));
   assert.ok(stripHtml({ listen: { model: "YAMNet, in your browser", state: "ok", ms: 9, top: "Clapping 70%" } }).includes("Hears: Clapping 70%"));

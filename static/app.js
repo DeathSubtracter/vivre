@@ -104,7 +104,7 @@ function addRule(text) {
   if (lines.length >= MAX_RULES) { say(`Vivre watches up to ${MAX_RULES} rules at once.`, true); return; }
   $("#rules").value = [...lines, text].join("\n");
 }
-document.querySelectorAll(".chip").forEach(c => c.onclick = () => { addRule(c.textContent); if ("sound" in c.dataset) preloadHearing(); });
+document.querySelectorAll(".chip").forEach(c => { if (c.dataset.rule) c.onclick = () => { addRule(c.dataset.rule); if ("sound" in c.dataset) preloadHearing(); }; });
 
 // Spoken rules: tap to start, tap to stop. Muse Voice Transcribe turns them into text you can check and edit.
 function resetTalk() {
@@ -185,14 +185,14 @@ async function loop() {
     fails = 0;
     states = d.cards.map(c => (c.armed ? "ok" : c.status));  // an alert still on screen can be ready for the next incident
     d.new_alerts.forEach(a => { thumbs[a.id] = cv.toDataURL("image/jpeg", 0.5); saveClip(a.id); });
-    render(d); showBoxes(d.boxes);
+    render(d); showBoxes(d.boxes); blink(!d.problem);
     history.push({ img: cv.toDataURL("image/jpeg", 0.5), d });
     if (history.length > MAX_HISTORY) history.shift();
     if (d.new_alerts.length) chime();
     d.new_alerts.forEach(a => speak(`${a.title}. ${a.say}`));
     quietStatus(d);
   } catch (e) {
-    fails += 1;
+    fails += 1; blink(false);
     if (fails >= MAX_FAILS) { say(`Stopped: ${e.message}`, true); stop(); return; }
     say(`Trouble on the last check, trying again. ${e.message}`, true);
   } finally { inFlight = false; }
@@ -233,6 +233,31 @@ function stateText(c) {
   if (c.status === "watch") return `Watching: ${Math.round(c.held)}s of ${Math.round(c.need)}s`;
   return "All clear";
 }
+// The corner folds further as a rule's time runs, so you can see how close an alert is from across the room.
+let folds = [];
+function foldSize(c) {
+  if (c.status === "alert") return 64;
+  if (c.status !== "watch") return 24;
+  return 28 + 28 * (c.need ? Math.min(1, c.held / c.need) : 1);
+}
+function foldCorners(cards) {
+  const els = [...document.querySelectorAll("#cards .card")];
+  els.forEach((el, i) => el.style.setProperty("--fold", `${folds[i] ?? 24}px`));
+  void document.body.offsetWidth;  // the cards were just redrawn, so set the old size first for the corner to animate from
+  els.forEach((el, i) => el.style.setProperty("--fold", `${foldSize(cards[i])}px`));
+  folds = cards.map(foldSize);
+}
+
+// The small light left on: it blinks once for each finished check, and turns red if checks aren't getting through.
+function blink(ok) {
+  const light = $("#light");
+  light.classList.toggle("off", !ok);
+  light.classList.remove("blink");
+  if (!ok) return;
+  void light.offsetWidth;
+  light.classList.add("blink");
+}
+
 function planText(m) {
   if (!m.question) return "";
   const need = (m.conditions || []).map(c => c.max === 0 ? `no ${c.subject}` : c.min != null ? `at least ${c.min} ${c.subject}` : `at most ${c.max} ${c.subject}`);
@@ -251,8 +276,8 @@ function renderLog(log = []) {
   $("#log").innerHTML = !log.length ? "" : `<h2>Alerts</h2><ol>${[...log].reverse().map(a => {
     const pic = thumbs[a.id] ? `<img src="${thumbs[a.id]}" alt="Frame when this alert fired">` : "";
     const open = clips[a.id] ? `<button type="button" class="thumb" data-clip="${Number(a.id)}" aria-label="Play the clip of this alert">${pic}</button>` : pic;
-    const note = savingClips.has(a.id) ? `<br><span class="fine">Saving a clip…</span>` : clips[a.id] ? `<br><span class="fine">Click the picture to watch the clip.</span>` : "";
-    return `<li>${open}<span><b>${esc(a.title)}</b> at ${esc(clock(a.at))}<br>${esc(a.say)}${note}</span></li>`;
+    const note = savingClips.has(a.id) ? `<span class="fine stub">Saving a clip…</span>` : clips[a.id] ? `<span class="fine stub">Tap the picture to watch the clip</span>` : "";
+    return `<li>${open}<span><time>${esc(clock(a.at))}</time><b>${esc(a.title)}</b>${esc(a.say)}${note}</span></li>`;
   }).join("")}</ol>`;
 }
 
@@ -288,6 +313,8 @@ function render(d) {
     ${c.note ? `<p class="note">${esc(c.note)}</p>` : ""}
     ${planText(meta[i]) ? `<p class="plan">${esc(planText(meta[i]))}</p>` : ""}</article>`).join("");
   document.body.classList.toggle("alerting", d.cards.some(c => c.status === "alert"));
+  document.body.classList.toggle("calm", d.cards.every(c => c.status === "ok"));
+  foldCorners(d.cards);
   const voice = spoken?.ledger || [], total = d.total == null ? null : d.total + (spoken?.total || 0);
   $("#strip").innerHTML = d.stages ? stripHtml(spoken ? { hear: spoken.stage, ...d.stages } : d.stages, total) : "";
   if (!d.ledger) { $("#ledger").innerHTML = ""; return; }
@@ -301,7 +328,7 @@ function stop() {
   wake?.release().catch(() => {}); wake = null;
   clearTimeout(nextCheck); keeper?.stop(); keeper = null; states = [];
   stopListening(); roomMic?.stop(); roomMic = null; hearingOn = false; hearingError = ""; spoken = null; showBoxes([]);
-  document.body.classList.remove("alerting");
+  document.body.classList.remove("alerting", "calm"); folds = [];
   setMonitor(false); $("#stop").hidden = true; $("#share").hidden = true;
   if (!history.length) return;
   $("#rev").hidden = false; $("#rs").max = history.length - 1; $("#rs").value = history.length - 1;

@@ -1,95 +1,152 @@
-:root{--fog:#e8edf0;--stock:#fbfcfc;--ink:#14232e;--mute:#5b6b76;--ok:#2f7d5b;--warn:#b86e00;--alert:#b3261e;--line:#c9d3d9}
-@media (prefers-color-scheme:dark){:root{--fog:#121b22;--stock:#1b2630;--ink:#e6edf1;--mute:#93a3ae;--ok:#58b890;--warn:#e0a040;--alert:#ff7a70;--line:#2c3a45}}
+:root{
+  /* A quiet home at night: warm dark surfaces, and one piece of paper */
+  --night:#161513;--surface:#1c1a18;--raised:#262421;--hair:rgba(239,233,222,.12);
+  --text:#efe9de;--soft:#aaa398;--mute:#8a847a;
+  --paper:#f4ecdc;--paper-dim:#ded5c3;--paper-ink:#241f18;--paper-soft:#655c4f;--paper-line:rgba(36,31,24,.14);
+  --ok:#2f7d5b;--warn:#b86e00;--alert:#b3261e;
+  --alert-on-night:#ff8a7e;--warn-on-night:#e0a040;--light:#f0c674;
+  --sans:"Bricolage Grotesque",system-ui,sans-serif;--serif:"Source Serif 4",Georgia,serif;--mono:ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:light){:root{
+  --night:#e9e3d6;--surface:#f3eee3;--raised:#ddd6c7;--hair:rgba(36,31,24,.14);
+  --text:#1f1b16;--soft:#544c41;--mute:#6b6256;
+  --alert-on-night:#a3221a;--warn-on-night:#8a5200;--light:#9a6a00;
+}}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;background:var(--fog);color:var(--ink);font:17px/1.55 "Source Serif 4",Georgia,serif}
-main{max-width:1040px;margin:0 auto;padding:max(20px,env(safe-area-inset-top)) 16px 64px}
-h1{font:700 clamp(44px,9vw,84px)/1 "Bricolage Grotesque",system-ui,sans-serif;letter-spacing:-.035em;margin:0}
-h2,h3,button,.status,select,summary{font-family:"Bricolage Grotesque",system-ui,sans-serif}
-.tag{color:var(--mute);font-style:italic;max-width:52ch;margin:8px 0 20px}
+body{margin:0;background:var(--night);color:var(--text);font:400 16px/1.5 var(--sans)}
+main{max-width:1120px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) 16px 64px}
 
-.layout{display:grid;gap:20px}
-@media (min-width:800px){.layout{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}.view{grid-column:1}.setup{grid-column:2;grid-row:1 / span 2}.tray{grid-column:1}}
+header{display:grid;gap:4px;margin-bottom:16px}
+h1{font:600 32px/1 var(--sans);letter-spacing:-.02em;margin:0}
+.tag{color:var(--soft);font-size:15px;line-height:1.4;max-width:60ch;margin:0}
 
-.camera{position:relative;background:#000;border-radius:6px;overflow:hidden;aspect-ratio:4/3}
+.layout{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+.view,.setup,.tray,.pipeline{min-width:0}
+@media (min-width:800px){
+  main{padding-top:24px}
+  header{grid-template-columns:auto 1fr;align-items:baseline;gap:16px;margin-bottom:20px}
+  .layout{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:24px;align-items:start}
+  .view{grid-column:1;grid-row:1}
+  .setup{grid-column:2;grid-row:1 / span 3}
+  .tray{grid-column:1;grid-row:2}
+  .pipeline{grid-column:1;grid-row:3}
+  .monitor .tray{grid-column:2;grid-row:1 / span 2}
+  .monitor .pipeline{grid-column:1;grid-row:2}
+}
+
+.camera{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9}
+@media (min-width:800px){.camera{aspect-ratio:4/3}}
+.monitor .camera{aspect-ratio:4/3}
 video{width:100%;height:100%;object-fit:cover;display:block}
-.placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:var(--stock);color:var(--mute);font-style:italic}
+.placeholder{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;background:var(--surface);color:var(--soft)}
 #boxes{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-.status{min-height:1.5em;margin:10px 0 0;font-weight:500}
-.status.err{color:var(--alert)}
 
-label{display:block;font-weight:600;margin:14px 0 6px}
-textarea,select,input[type=file]{width:100%;background:var(--stock);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:10px;font:inherit}
-input[type=range]{width:100%}
-#ri{width:100%;border-radius:6px;margin-top:8px;display:block}
-button{min-height:44px;margin-top:14px;background:var(--ink);color:var(--fog);border:0;border-radius:6px;padding:10px 20px;font-size:17px;font-weight:700;cursor:pointer}
-button.quiet{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:500}
-button.over{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;background:var(--fog);color:var(--ink)}
-button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--ok);outline-offset:2px}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-button.chip{margin:0;min-height:40px;padding:6px 12px;background:var(--stock);color:var(--ink);border:1px solid var(--line);font-size:14px;font-weight:500;text-align:left}
-.consent{display:flex;gap:10px;align-items:center;font-weight:500}
-.consent input{width:22px;height:22px;flex:none}
-#talk{margin-top:8px}
-#talk.on{border-color:var(--alert);color:var(--alert)}
+.statusline{display:flex;align-items:center;gap:8px;margin-top:8px}
+.statusline:has(#status:empty){margin:0}
+#light{display:none;width:8px;height:8px;border-radius:50%;background:var(--light);opacity:.35;flex:none}
+.monitor #light{display:block}
+#light.blink{animation:blink .7s ease-out}
+#light.off{background:var(--alert-on-night);opacity:1}
+@keyframes blink{0%{opacity:1;box-shadow:0 0 0 3px rgba(240,198,116,.25)}100%{opacity:.35;box-shadow:0 0 0 0 rgba(240,198,116,0)}}
+.status{margin:0;font-weight:500;font-size:15px}
+.status.err{color:var(--alert-on-night)}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.controls button{margin:0}
+#hearing{margin:4px 0 0}
+
+label{display:block;font-weight:500;margin:0 0 4px;font-size:16px}
+.hint{color:var(--mute);font-size:13px;margin:4px 0 0}
+textarea,select,input[type=file]{width:100%;background:var(--surface);color:var(--text);border:1px solid var(--hair);border-radius:8px;padding:8px 12px;font:400 16px/1.4 var(--sans)}
+textarea::placeholder{color:var(--mute)}
+input[type=range]{width:100%;accent-color:var(--light)}
+#ri{width:100%;border-radius:8px;margin-top:8px;display:block}
+
+button{min-height:44px;margin-top:12px;background:var(--text);color:var(--night);border:0;border-radius:8px;padding:8px 20px;font:500 16px/1.2 var(--sans);cursor:pointer;transition:background-color .15s ease,border-color .15s ease,transform .1s ease}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.6;cursor:default}
+button.quiet{background:transparent;color:var(--text);border:1px solid var(--hair)}
+button.quiet:hover,button.chip:hover{background:var(--raised)}
+button.over{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0}
+button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--light);outline-offset:2px}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+button.chip{margin:0;min-height:36px;padding:4px 12px;background:var(--surface);color:var(--text);border:1px solid var(--hair);font-size:14px}
+button.chip.talk{border-color:var(--soft)}
+button.chip.on{border-color:var(--alert-on-night);color:var(--alert-on-night)}
+.consent{display:flex;gap:8px;align-items:center;margin-top:16px;font-size:15px;min-height:28px}
+.consent input{width:20px;height:20px;flex:none;margin:0;accent-color:var(--light)}
 #go{display:block;width:100%}
-#sample{display:block;width:100%;margin-top:8px}
-.more{margin-top:14px}
-.more summary{cursor:pointer;min-height:32px}
-.fine{color:var(--mute);font-size:14px;margin:12px 0 0}
+.more{margin-top:16px;font-size:15px}
+.more summary{cursor:pointer;min-height:28px;color:var(--soft)}
+.more label{margin-top:12px;font-size:15px}
+.more button{margin-top:8px}
+.fine{color:var(--mute);font-size:13px;line-height:1.45;margin:12px 0 0}
+.fine strong{color:var(--soft);font-weight:500}
 
-.cards{display:grid;gap:14px}
-.card{position:relative;background:var(--stock);border:1px solid var(--line);border-radius:4px 4px 4px 26px;padding:16px 20px;overflow:hidden;transition:transform .35s ease}
-.card::after{content:"";position:absolute;top:0;right:0;border-style:solid;border-width:0 30px 30px 0;border-color:transparent var(--ok) var(--line) transparent}
-.card.watch{border-color:var(--warn)}.card.watch::after{border-color:transparent var(--warn) var(--line) transparent}
-.card.alert{border-color:var(--alert);transform:rotate(-.5deg)}.card.alert::after{border-color:transparent var(--alert) var(--line) transparent;border-width:0 48px 48px 0}
-.card h3{margin:0;padding-right:34px;font-size:21px;line-height:1.2}
-.say{margin:2px 0 8px;color:var(--mute);font-style:italic;font-size:15px}
-.state{font:700 17px "Bricolage Grotesque",system-ui,sans-serif;color:var(--ok);margin:0}
-.watch .state{color:var(--warn)}.alert .state{color:var(--alert)}
-.note{margin:4px 0 0;font-size:15px}
-.plan{margin:10px 0 0;padding-top:8px;border-top:1px solid var(--line);color:var(--mute);font-size:13px;line-height:1.4}
-@media (prefers-reduced-motion:reduce){.card{transition:none}}
+/* The Vivre Card: the one piece of paper on the screen. Its corner folds further as a rule's time runs. */
+.cards{display:grid;gap:16px}
+.card{--fold:24px;--corner:var(--ok);position:relative;background:var(--paper);color:var(--paper-ink);border-radius:4px 4px 4px 24px;padding:16px 20px;overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.5) inset,0 8px 24px rgba(0,0,0,.28);transition:transform .35s ease}
+.card::after{content:"";position:absolute;top:0;right:0;border-style:solid;border-width:0 var(--fold) var(--fold) 0;border-color:transparent var(--night) var(--corner) transparent;transition:border-width .6s ease,border-color .3s ease;filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.2))}
+.card.watch{--corner:var(--warn)}
+.card.alert{--corner:var(--alert);transform:rotate(-.5deg)}
+.card h3{margin:0;padding-right:56px;font:600 20px/1.2 var(--sans)}
+.say{margin:2px 0 8px;padding-right:48px;color:var(--paper-soft);font:italic 400 15px/1.35 var(--serif)}
+.state{font:600 16px/1.3 var(--sans);color:var(--ok);margin:0}
+.watch .state{color:#8a5200}.alert .state{color:var(--alert)}
+.note{margin:4px 0 0;font:400 16px/1.4 var(--serif)}
+.plan{margin:12px 0 0;padding-top:8px;border-top:1px solid var(--paper-line);color:var(--paper-soft);font-size:13px;line-height:1.4}
+@media (prefers-reduced-motion:reduce){.card,.card::after,button{transition:none}#light.blink{animation:none;opacity:1}}
 
-/* The one big moment: the camera frame rings red when a rule fires, then stays outlined until it clears */
-.alerting .camera{outline:4px solid var(--alert);outline-offset:0;animation:ring 1s ease-out 3}
-@keyframes ring{from{outline-offset:12px;outline-color:transparent}to{outline-offset:0;outline-color:var(--alert)}}
+/* The camera frame rings red when a rule fires, then stays outlined until it clears */
+.alerting .camera{outline:4px solid var(--alert-on-night);animation:ring 1s ease-out 3}
+@keyframes ring{from{outline-offset:12px;outline-color:transparent}to{outline-offset:0;outline-color:var(--alert-on-night)}}
 @media (prefers-reduced-motion:reduce){.alerting .camera{animation:none}}
 
-#ledger h2{font-size:18px;margin:22px 0 4px}
-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
-th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
-
-#log h2{font-size:18px;margin:18px 0 6px}
+/* Alerts: note stubs torn from the same paper, most recent first */
+#log h2,#ledger h2{font:500 15px/1.3 var(--sans);color:var(--soft);margin:20px 0 8px}
 #log ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
-#log li{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.35}
-#log img{width:72px;border-radius:4px;flex:none}
-#log b{font-family:"Bricolage Grotesque",system-ui,sans-serif}
-#share{margin-left:8px}
-.viewer .camera,.viewer #stop,.viewer #share,.viewer .setup{display:none}
-.viewer header{display:block}
+#log li{display:flex;gap:12px;align-items:flex-start;background:var(--paper-dim);color:var(--paper-ink);border-left:2px dashed var(--paper-soft);border-radius:2px 6px 6px 2px;padding:8px 12px 8px 8px;font:400 15px/1.35 var(--serif)}
+#log li:nth-child(even){transform:rotate(.25deg)}
+#log img{width:80px;border-radius:2px;display:block;flex:none}
+#log b{display:block;font:600 14px/1.3 var(--sans)}
+#log time{display:block;font:400 12px/1.4 var(--mono);color:var(--paper-soft);margin-bottom:2px}
+#log .fine{color:var(--paper-soft);margin:0;font-family:var(--sans)}
+#log li button.thumb{margin:0;padding:0;min-height:0;background:none;border:0;border-radius:2px;flex:none;position:relative;line-height:0}
+#log li button.thumb::after{content:"\25B6";position:absolute;left:4px;bottom:4px;color:#fff;font-size:12px;line-height:1;text-shadow:0 0 3px #000}
 
-/* Monitor mode: the camera comes first, one quiet line, cards only ask for attention when they change */
+/* What each model did, as one quiet list. Color only appears when a stage is working or failing. */
+.pipeline{transition:opacity .4s ease}
+.monitor.calm .pipeline{opacity:.7}
+.strip{list-style:none;margin:0;padding:0}
+.stage{display:grid;grid-template-columns:88px 132px minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--hair);font-size:13px;line-height:1.35}
+.stage strong{font:500 14px/1.35 var(--sans)}
+.stage .model{font:400 12px/1.4 var(--mono);color:var(--soft);overflow-wrap:anywhere}
+.stage .job{color:var(--mute)}
+.stage .time{font:400 12px/1.4 var(--mono);color:var(--mute);white-space:nowrap}
+.stage.waiting .time{color:var(--warn-on-night)}
+.stage.failed .time,.stage.unavailable .time{color:var(--alert-on-night)}
+@media (max-width:560px){
+  .stage{grid-template-columns:88px minmax(0,1fr) auto}
+  .stage .job{grid-column:1 / -1;grid-row:2}
+  .stage .job.plain{display:none}
+}
+#strip .fine{margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:4px 8px 4px 0;border-bottom:1px solid var(--hair);font-weight:400}
+th{color:var(--mute)}
+td:not(:first-child){font-family:var(--mono);font-size:12px}
+td:first-child{font-family:var(--mono);font-size:12px;color:var(--soft)}
+
+.viewer .camera,.viewer #stop,.viewer #share,.viewer .setup,.viewer .controls{display:none}
+
+/* Watching: the camera comes first, and the rest waits until something changes */
 .monitor header{display:none}
 .monitor .setup{display:none}
-@media (min-width:800px){.monitor .tray{grid-column:2;grid-row:1}}
 
-/* The pipeline strip: one stage per model job. A stage is only coloured once it has done something. */
-.strip{list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}
-.stage{display:flex;flex-direction:column;gap:1px;background:var(--stock);border:1px solid var(--line);border-top:3px solid var(--line);border-radius:4px;padding:8px 10px;min-width:0;font-size:13px;line-height:1.3;transition:border-color .3s ease}
-.stage strong{font:700 15px "Bricolage Grotesque",system-ui,sans-serif}
-.stage .model{font:500 12px ui-monospace,Menlo,monospace;overflow-wrap:anywhere;min-height:1.3em}
-.stage .job{color:var(--mute)}
-.stage .time{font:700 13px "Bricolage Grotesque",system-ui,sans-serif;margin-top:auto;padding-top:4px;color:var(--mute)}
-.stage.ok{border-top-color:var(--ok)}.stage.ok .time{color:var(--ok)}
-.stage.waiting{border-top-color:var(--warn)}.stage.waiting .time{color:var(--warn)}
-.stage.failed,.stage.unavailable{border-top-color:var(--alert)}.stage.failed .time,.stage.unavailable .time{color:var(--alert)}
-@media (prefers-reduced-motion:reduce){.stage{transition:none}}
-
-#log li button.thumb{margin:0;padding:0;min-height:0;background:none;border:0;flex:none;position:relative;line-height:0}
-#log li button.thumb::after{content:"\25B6";position:absolute;left:6px;bottom:6px;color:#fff;font-size:12px;line-height:1;text-shadow:0 0 3px #000}
-#clip{max-width:min(640px,94vw);width:100%;background:var(--stock);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:14px}
-#clip::backdrop{background:rgba(0,0,0,.6)}
+#clip{max-width:min(640px,94vw);width:100%;background:var(--surface);color:var(--text);border:1px solid var(--hair);border-radius:8px;padding:16px}
+#clip::backdrop{background:rgba(0,0,0,.65)}
 #clipv{width:100%;height:auto;border-radius:4px;background:#000}
-#clipt{margin:10px 0 0;font-size:15px}
-#clipd{display:inline-block;margin-right:12px;color:var(--ink);font-family:"Bricolage Grotesque",system-ui,sans-serif}
+#clipt{margin:8px 0 0;font:400 15px/1.4 var(--serif)}
+#clipd{display:inline-block;margin-right:12px;color:var(--text);font-size:15px}
+.stub{display:block}

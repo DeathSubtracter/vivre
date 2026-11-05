@@ -152,7 +152,7 @@ def check_frame(questions, frames, counts, led, audio=None):
     out = ask(COMPILER, [txt(
         f"Check {seen} against each question. {heard}Object counts from a segmentation model: {counts or 'n/a'}.\n{qs}\n"
         "Answer true only if clearly happening right now. Describe objects, sounds and activity only, never who someone is "
-        'or how they look. Return ONLY JSON: {"answers":[{"yes":<bool>,"note":"<max 15 words: what you notice>"}]} '
+        'or how they look. Return ONLY JSON: {"answers":[{"yes":<bool>,"note":"<one short plain sentence, max 12 words, about what matters for this question, like: A cup is on the table. Do not list the room or its furniture>"}]} '
         f"with exactly {len(questions)} items, in order."),
         *[img(f) for f in frames], *([sound(audio)] if audio else [])], led, max_tokens=4000, effort=SPARK_EFFORT)
     a = (jparse(out) or {}).get("answers")
@@ -170,7 +170,7 @@ def confirm(question, frames, note, led, audio=None, recognized=None):
     out = ask(JUDGE, [txt(
         f"A cheaper model flagged the newest of these video frames (oldest first). {heard}Question: {question}\nIt said: {note}\n"
         "Confirm only if clearly true. Never say who someone is or how they look. Return ONLY JSON: "
-        '{"confirm":<bool>,"explanation":"<one plain sentence a worried family member would understand, saying what is happening. Do not start with Yes, and do not mention frames, models or the question>"}'),
+        '{"confirm":<bool>,"explanation":"<one plain sentence a worried family member would understand, saying what is happening, like: Someone is calling for help. Do not start with Yes, do not describe the room, and do not mention frames, models or the question>"}'),
         *[img(f) for f in frames], *([sound(audio)] if audio else [])], led, max_tokens=6000, tries=25)
     v = jparse(out)
     if v is None or not isinstance(v.get("confirm"), bool):

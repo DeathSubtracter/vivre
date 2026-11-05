@@ -22,24 +22,30 @@
         <div id="placeholder" class="placeholder" hidden></div>
         <button id="camOn" class="over">Turn on camera</button>
       </div>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <div class="statusline">
+        <span id="light" aria-hidden="true" title="Blinks each time Vivre finishes a check"></span>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </div>
       <p id="hearing" class="fine" hidden></p>
-      <button id="stop" hidden>Stop watching</button>
-      <button id="share" class="quiet" hidden>Get alerts on another device</button>
+      <div class="controls">
+        <button id="stop" class="quiet" hidden>Stop watching</button>
+        <button id="share" class="quiet" hidden>Get alerts on another device</button>
+      </div>
     </section>
     <section id="setup" class="setup">
-      <label for="rules">What should it watch for? One sentence per line, up to 3.</label>
-      <textarea id="rules" rows="3" maxlength="620" placeholder="Tell me if nobody is at the desk for 10 seconds"></textarea>
-      <button id="talk" type="button" class="quiet">Say a rule</button>
+      <label for="rules">What should Vivre watch for?</label>
+      <textarea id="rules" rows="2" maxlength="620" placeholder="Tell me if nobody is at the desk for 10 seconds"></textarea>
+      <p class="hint">One sentence per line, up to 3</p>
       <div class="chips" aria-label="Example rules">
-        <button type="button" class="chip">Tell me if the stove is on with a pot and nobody has been in the kitchen for 10 seconds</button>
-        <button type="button" class="chip">Tell me if nobody is at the desk for 10 seconds</button>
-        <button type="button" class="chip">Tell me if a cup is left on the table for 10 seconds</button>
-        <button type="button" class="chip">Tell me if someone calls for help</button>
-        <button type="button" class="chip" data-sound>Tell me if you hear clapping</button>
-        <button type="button" class="chip" data-sound>Tell me if a baby is crying</button>
+        <button type="button" id="talk" class="chip talk">Say a rule</button>
+        <button type="button" class="chip" data-rule="Tell me if the stove is on with a pot and nobody has been in the kitchen for 10 seconds">Stove left on</button>
+        <button type="button" class="chip" data-rule="Tell me if nobody is at the desk for 10 seconds">Desk empty</button>
+        <button type="button" class="chip" data-rule="Tell me if a cup is left on the table for 10 seconds">Cup on table</button>
+        <button type="button" class="chip" data-rule="Tell me if someone calls for help">Call for help</button>
+        <button type="button" class="chip" data-sound data-rule="Tell me if you hear clapping">Clapping</button>
+        <button type="button" class="chip" data-sound data-rule="Tell me if a baby is crying">Baby crying</button>
       </div>
-      <label class="consent"><input id="consent" type="checkbox"> I'm only filming people who agreed.</label>
+      <label class="consent"><input id="consent" type="checkbox"> I'm only filming people who agreed</label>
       <button id="go">Start watching</button>
       <p class="fine"><strong>A prototype, not a safety device.</strong> It complements smoke alarms and medical-alert gear. It checks every few seconds and can miss things.</p>
       <p class="fine">Frames are sent to Meta's API for analysis. Vivre keeps the last few in memory during a session and never saves them. The microphone only turns on for spoken rules and rules about sounds, and those few seconds of sound are treated the same way. Alert clips stay in this browser until you close the tab.</p>
@@ -60,6 +66,8 @@
     <section class="tray">
       <div id="cards" class="cards"></div>
       <div id="log"></div>
+    </section>
+    <section class="pipeline">
       <div id="strip"></div>
       <div id="ledger"></div>
     </section>
