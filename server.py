@@ -126,6 +126,7 @@ def friendly(e):
     status = getattr(e, "status_code", None)
     if status in (401, 403): return "Meta's API rejected the key. Check the API key setting on the server."
     if status == 402: return "Meta's API says the account is out of credit. Check the Billing page."
+    if status == 404: return "Meta's models didn't answer this check. Trying again."
     if status == 429: return "Meta's API is rate limiting us. Wait a moment and try again."
     if type(e).__name__ in ("APITimeoutError", "APIConnectionError"): return "Couldn't reach Meta's API. Check the connection and try again."
     return f"Meta's API had a problem with that request (error {status or type(e).__name__}). Try again in a moment."
@@ -175,7 +176,7 @@ def start(body: Start, request: Request):
     except Exception as e:
         print(f"Rule compile failed: {meta.describe(e)}")
         if getattr(e, "status_code", None) == 404:  # Meta isn't offering models to this server right now
-            return sample_reply("Live watching can't reach Meta's models from this server right now.")
+            return sample_reply("Meta's models aren't answering right now, which sometimes lasts a few minutes.")
         raise HTTPException(502, friendly(e))
     specs = raw
     for s, r in zip(specs, rules):
@@ -355,26 +356,6 @@ def spoken_rule(request: Request, audio: UploadFile = File(...)):
 
 
 _visible = {"at": 0.0, "n": None}
-
-@app.get("/api/diag")
-def diag(request: Request):
-    """Temporary and free: does the network route change what Meta's API lists? Shows counts only."""
-    import socket, httpx2
-    if not limiter.allow("diag", 6, 60): raise HTTPException(429, "Wait a moment.")
-    def sample(local):
-        try:
-            with httpx2.Client(transport=httpx2.HTTPTransport(local_address=local), timeout=8) as c:
-                r = [c.get("https://api.meta.ai/v1/models", headers={"Authorization": f"Bearer {meta.client.api_key}"}) for _ in range(6)]
-            return [(x.status_code, len(x.json().get("data", [])), x.headers.get("x-fb-debug", "")[:6], x.extensions.get("http_version", b"").decode()) for x in r]
-        except Exception as e:
-            return type(e).__name__
-    try:
-        addrs = sorted({a[4][0] for a in socket.getaddrinfo("api.meta.ai", 443)})
-    except OSError as e:
-        addrs = type(e).__name__
-    return {"addresses": addrs, "ipv4": sample("0.0.0.0"), "ipv6": sample("::"),
-            "sdk": [len(meta.client.models.list().data) for _ in range(6)]}
-
 
 @app.get("/healthz")
 def healthz():
