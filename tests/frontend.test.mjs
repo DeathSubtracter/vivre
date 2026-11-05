@@ -1,7 +1,7 @@
 // Run with: node --test tests/frontend.test.mjs   (no browser, no API calls)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { downsample, encodeWav } from "../static/audio.js";
+import { downsample, encodeWav, speechLimitMs } from "../static/audio.js";
 import { coverMap } from "../static/boxes.js";
 import { stripHtml } from "../static/strip.js";
 import { bestScores, topScores } from "../static/hearing.js";
@@ -11,6 +11,11 @@ test("downsample turns 48 kHz into a third as many samples and keeps the level",
   const out = downsample(new Float32Array(4800).fill(0.5), 48000);
   assert.equal(out.length, 1600);
   assert.ok(out.every(v => Math.abs(v - 0.5) < 1e-6));
+});
+
+test("a stuck spoken alert can only block listening for a limited time", () => {
+  assert.equal(speechLimitMs("Hi"), 1680);
+  assert.equal(speechLimitMs("x".repeat(5000)), 15000);
 });
 
 test("audio already at 16 kHz is left alone", () => {

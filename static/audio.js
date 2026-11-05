@@ -24,6 +24,11 @@ export function encodeWav(samples, rate = WAV_RATE) {
   return v.buffer;
 }
 
+// How long a spoken alert should take. iPhones can report "still speaking" forever, so this is the longest we believe it.
+export function speechLimitMs(text) {
+  return Math.min(15000, 1500 + 90 * String(text).length);
+}
+
 export class Mic {
   // raw: skip the browser's noise suppression, which is built for speech and can remove claps, cries and alarms
   constructor(keepSeconds, raw = false) { this.keep = keepSeconds; this.raw = raw; this.chunks = []; this.held = 0; }

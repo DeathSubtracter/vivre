@@ -1,5 +1,5 @@
 import { stripHtml } from "./strip.js";
-import { Mic } from "./audio.js";
+import { Mic, speechLimitMs } from "./audio.js";
 import { drawBoxes } from "./boxes.js";
 import { loadHearing, hear, topScores } from "./hearing.js";
 import { ClipKeeper } from "./clips.js";
@@ -15,18 +15,24 @@ let hearingError = "", hearingOn = false, hearTimer = null, peak = {}, hearMs = 
 
 const preloadHearing = () => { loadHearing().catch(e => console.error(e)); };  // a failure is retried, and reported, at Start
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
-let spokeUntil = 0;
+let spokeUntil = 0, speechDeadline = 0;
 const speak = m => {
   if (!("speechSynthesis" in window)) return;
   const u = new SpeechSynthesisUtterance(m);
-  u.onend = () => { spokeUntil = Date.now(); };
+  const done = () => { spokeUntil = Date.now(); };
+  u.onend = done; u.onerror = done;
   spokeUntil = Date.now();
+  speechDeadline = Date.now() + speechLimitMs(m);
+  speechSynthesis.resume();  // iPhones can leave speech paused, which silently blocks everything after it
   speechSynthesis.speak(u);
 };
 // Vivre must not hear its own alert: only send sound recorded after it finished speaking.
 function roomClip() {
   if (!roomMic) return null;
-  if ("speechSynthesis" in window && speechSynthesis.speaking) { spokeUntil = Date.now(); return null; }
+  if ("speechSynthesis" in window && speechSynthesis.speaking) {
+    if (Date.now() < speechDeadline) { spokeUntil = Date.now(); return null; }
+    speechSynthesis.cancel();  // stuck: it must not stop Vivre listening for the rest of the session
+  }
   const seconds = Math.min(ROOM_SECONDS, (Date.now() - spokeUntil) / 1000 - 0.3);
   return seconds >= 1 ? roomMic.wav(seconds) : null;
 }
@@ -48,7 +54,10 @@ document.addEventListener("visibilitychange", () => {
   if (running && document.visibilityState === "visible") keepAwake();
 });
 function unlockSound() {
-  if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(""));
+  if ("speechSynthesis" in window) {
+    speechSynthesis.cancel();  // clear anything stuck from the last session, then unlock speech during this tap
+    speechSynthesis.speak(new SpeechSynthesisUtterance(" "));
+  }
   const AC = window.AudioContext || window.webkitAudioContext;
   try { audio = audio || (AC ? new AC() : null); audio?.resume(); } catch { audio = null; }
 }
