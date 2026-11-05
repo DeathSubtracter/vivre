@@ -96,7 +96,7 @@ def friendly(e):
     if status == 402: return "Meta's API says the account is out of credit. Check the Billing page."
     if status == 429: return "Meta's API is rate limiting us. Wait a moment and try again."
     if type(e).__name__ in ("APITimeoutError", "APIConnectionError"): return "Couldn't reach Meta's API. Check the connection and try again."
-    return "Meta's API had a problem with that request. Try again in a moment."
+    return f"Meta's API had a problem with that request (error {status or type(e).__name__}). Try again in a moment."
 
 
 def sample_reply(reason):
@@ -133,7 +133,7 @@ def start(body: Start, request: Request):
     try:
         raw = list(compile_pool.map(lambda r: meta.compile_rule(r, led), rules))
     except Exception as e:
-        print(f"Rule compile failed: {type(e).__name__}")
+        print(f"Rule compile failed: {meta.describe(e)}")
         raise HTTPException(502, friendly(e))
     specs = [validate_spec(o, r) for o, r in zip(raw, rules)]
     for s, r in zip(specs, rules):
@@ -187,7 +187,7 @@ def run_check(S, jpg, diff, now):
             answers = meta.check_frame([s["question"] for s in specs], jpg, counts, led)
             stages["judge"] = {"model": meta.COMPILER, "state": "ok" if answers else "failed", "ms": meta.now_ms(t0)}
         except Exception as e:
-            print(f"Spark check failed: {type(e).__name__}")
+            print(f"Spark check failed: {meta.describe(e)}")
             answers, problem = None, friendly(e)
             stages["judge"] = {"model": meta.COMPILER, "state": "failed", "ms": meta.now_ms(t0)}
         if answers:
@@ -210,7 +210,7 @@ def run_check(S, jpg, diff, now):
                     v = meta.confirm(s["question"], list(S["frames"]), note, led)
                     stages["confirm"] = {"model": meta.JUDGE, "state": "ok", "ms": meta.now_ms(t0)}
                 except Exception as e:  # say so on screen and alert on Spark's word alone
-                    print(f"Wonder confirm failed: {type(e).__name__}")
+                    print(f"Wonder confirm failed: {meta.describe(e)}")
                     v = {"confirm": True, "explanation": note}
                     stages["confirm"] = {"model": meta.JUDGE, "state": "unavailable", "ms": meta.now_ms(t0)}
                 if v["confirm"]:

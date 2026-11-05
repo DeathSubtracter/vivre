@@ -93,7 +93,7 @@ def segment(jpg, phrase, led):
         led.add(SEG)
         return count_boxes(r.output_text or "")
     except Exception as e:
-        print(f"SAM unavailable, running on Spark only: {type(e).__name__}")  # never log images or keys
+        print(f"SAM unavailable, running on Spark only: {describe(e)}")  # never log images or keys
         return None
 
 
@@ -125,3 +125,9 @@ def confirm(question, frames, note, led):
 
 
 def now_ms(t0): return round((time.time() - t0) * 1000)
+
+
+def describe(e):
+    """A short error line for the logs, with the key scrubbed out. Never includes images."""
+    key = os.getenv("MODEL_API_KEY") or "\0"
+    return f"{type(e).__name__} status={getattr(e, 'status_code', None)} {str(e).replace(key, '<key>')[:300]}"
