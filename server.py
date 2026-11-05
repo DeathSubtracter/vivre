@@ -42,6 +42,7 @@ SOUND_ALSO = {"Clapping": {"Hands": 0.5, "Applause": 0.25}, "Baby cry, infant cr
               "Crying, sobbing": {"Baby cry, infant cry": 0.25}, "Smoke detector, smoke alarm": {"Fire alarm": 0.25, "Alarm": 0.4},
               "Fire alarm": {"Smoke detector, smoke alarm": 0.25, "Alarm": 0.4}}
 SOUND_ALERT_HOLD_S = 30  # a clap is over in a moment, so its alert stays up long enough to be seen
+SOUND_REARM_S = 8        # a new alert needs a quiet check first and this long since the last, so one long burst is one incident
 FRESH_S = 12             # SAM's counts and boxes older than this don't decide anything
 MIN_CHECK_S = 2.9        # no session checks faster than every 3 seconds
 STILL_DIFF, STILL_MAX_S = 0.015, 12  # still frames reuse the last answer, up to this long
@@ -369,7 +370,7 @@ def run_check(S, jpg, diff, now, fast=False):
                 yes, note, stages["see"]["overruled"] = False, why, True
             state, held = timer.step(yes, t)
             if state == "due" and by_ear(S, s):  # the recognizer decided, so alert now; Wonder explains afterward
-                timer.confirmed(t, SOUND_ALERT_HOLD_S)
+                timer.confirmed(t, SOUND_ALERT_HOLD_S, SOUND_REARM_S)
                 S["expl"][i], state = note, "alert"
                 alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": note, "t": t, "at": round(now * 1000)}
                 S["log"].append(alert); new.append(alert)
@@ -392,7 +393,8 @@ def run_check(S, jpg, diff, now, fast=False):
                     timer.rejected(t)
                     state, held, note = "ok", 0.0, f"Double-checked, not confirmed. {v['explanation']}"
             if state == "alert": note = S["expl"][i] or note
-            cards.append({"status": "watch" if state == "due" else state, "held": held, "need": timer.need, "note": note})
+            cards.append({"status": "watch" if state == "due" else state, "held": held, "need": timer.need, "note": note,
+                          "armed": timer.can_refire(t)})
         S["cards"] = cards
     return {"t": t, "cards": S["cards"], "new_alerts": new, "reused": reused, "skipped": led.skipped, "problem": problem,
             "stages": stages, "boxes": boxes, "log": S.get("log", []), "ledger": led.report(), "total": round(led.total, 4)}
@@ -424,7 +426,7 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
         parsed = parse_heard(heard) if heard else None
         # a wanted sound can't wait for the next check. This path asks no model, so it costs nothing and needs no limit of its own.
         fast = bool(parsed) and now - S["last_tick"] < MIN_CHECK_S and any(
-            heard_match(s, parsed) and not t.fired for s, t in zip(S["specs"], S["timers"]))
+            heard_match(s, parsed) and (not r.fired or r.can_refire(now - S["t0"])) for s, r in zip(S["specs"], S["timers"]))
         if S["out"] and now - S["last_tick"] < MIN_CHECK_S and not fast: return S["out"]
         if not fast: S["last_tick"] = now
         S["heard"] = parsed

@@ -349,6 +349,31 @@ class HearingTests(unittest.TestCase):
             S["heard"] = {"ms": 1, "scores": {"Clapping": 0.9}}
             self.assertEqual(len(server.run_check(S, b"j", 1, 40)["new_alerts"]), 1)
 
+    def test_a_second_burst_after_a_quiet_gap_is_a_second_alert(self):
+        S = session(0)
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        hit, quiet = {"ms": 1, "scores": {"Hands": 0.9}}, {"ms": 1, "scores": {}}
+        def check(heard, t):
+            S["heard"] = heard
+            return server.run_check(S, b"j", 1, t)
+        with mock.patch.object(server, "start_sam"), mock.patch.object(server, "explain_later"):
+            self.assertEqual(len(check(hit, 3)["new_alerts"]), 1)
+            self.assertEqual(check(hit, 6)["new_alerts"], [])     # one long burst stays one incident
+            self.assertEqual(check(quiet, 9)["cards"][0]["status"], "alert")
+            self.assertEqual(check(hit, 10)["new_alerts"], [])    # too soon after the first
+            check(quiet, 11)
+            second = check(hit, 14)
+            self.assertEqual([a["id"] for a in second["new_alerts"]], [2])
+            self.assertEqual(second["cards"][0]["status"], "alert")
+            self.assertEqual(len(second["log"]), 2)
+
+    def test_a_camera_rule_still_fires_only_once_until_it_clears(self):
+        S = session(0)
+        with mock.patch.object(meta, "check_frame", return_value=yes(True)), mock.patch.object(server, "start_sam"), \
+             mock.patch.object(meta, "confirm", return_value={"confirm": True, "explanation": "Why"}) as wonder:
+            for t in (3, 6, 30): server.run_check(S, b"j", 1, t)
+        self.assertEqual(wonder.call_count, 1)
+
     def test_wonder_explains_afterward_and_failure_keeps_the_alert(self):
         class NowPool:
             def submit(self, fn): fn()

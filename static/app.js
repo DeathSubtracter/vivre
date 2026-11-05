@@ -160,7 +160,7 @@ async function loop() {
     if (!running) return;
     if (d.sample) { stop(); playSample(d.reason); return; }
     fails = 0;
-    states = d.cards.map(c => c.status);
+    states = d.cards.map(c => (c.armed ? "ok" : c.status));  // an alert still on screen can be ready for the next incident
     d.new_alerts.forEach(a => { thumbs[a.id] = cv.toDataURL("image/jpeg", 0.5); saveClip(a.id); });
     render(d); showBoxes(d.boxes);
     history.push({ img: cv.toDataURL("image/jpeg", 0.5), d });
