@@ -87,6 +87,12 @@ def ask(model, content, led, max_tokens=1500, effort=None, tries=NOT_FOUND_TRIES
     return r.output_text
 
 
+# Sounds the browser's recognizer (YAMNet) can decide, spelled exactly as its label list spells them.
+SOUND_LABELS = ["Clapping", "Applause", "Baby cry, infant cry", "Crying, sobbing", "Screaming", "Shout", "Cough", "Snoring",
+                "Bark", "Meow", "Doorbell", "Knock", "Telephone bell ringing", "Ringtone", "Alarm", "Alarm clock", "Siren",
+                "Smoke detector, smoke alarm", "Fire alarm", "Beep, bleep", "Whistling", "Whistle", "Steam whistle", "Boiling",
+                "Sizzle", "Frying (food)", "Microwave oven", "Glass", "Shatter", "Breaking"]
+
 SPEC = ('Return ONLY JSON: {"title": short card title, "subjects": [1-3 plain noun phrases a '
         'segmentation model can find, one concept each, e.g. "person", "cooking pot"], "question": a yes/no question '
         'answerable from the latest video frame and any sound, phrased so YES means the situation to watch for is '
@@ -96,7 +102,9 @@ SPEC = ('Return ONLY JSON: {"title": short card title, "subjects": [1-3 plain no
         '"nobody is at the desk" needs {"subject":"person","max":0}. "the stove is on with a pot and nobody is there" needs '
         'both {"subject":"cooking pot","min":1} and {"subject":"person","max":0}. Empty only if counting objects can\'t '
         'decide it, like a sound or whether a burner is lit], '
-        '"uses_sound": true only if the rule depends on hearing something, "uses_motion": true only if it depends on '
+        '"uses_sound": true only if the rule depends on hearing something, '
+        f'"sound_labels": [for a non-speech sound, the matching names copied exactly from {json.dumps(SOUND_LABELS)}; empty for '
+        'anything else, including words someone says such as calling for help], "uses_motion": true only if it depends on '
         'movement between frames, such as waving}')
 
 
@@ -153,9 +161,12 @@ def check_frame(questions, frames, counts, led, audio=None):
     return [{"yes": x.get("yes") is True, "note": str(x.get("note") or "")[:120]} for x in a]
 
 
-def confirm(question, frames, note, led, audio=None):
+def confirm(question, frames, note, led, audio=None, recognized=None):
     """Wonder looks at the last few frames, and listens if the rule uses sound. If it can't answer, the caller says so."""
     heard = "You also get the last few seconds of sound from the room. " if audio else ""
+    if recognized:
+        heard += (f"A sound recognizer on the person's device heard: {recognized}. You may not be able to hear non-speech "
+                  "sounds yourself, so don't reject for that. Reject only if the picture shows it can't be true. ")
     out = ask(JUDGE, [txt(
         f"A cheaper model flagged the newest of these video frames (oldest first). {heard}Question: {question}\nIt said: {note}\n"
         "Confirm only if clearly true. Never say who someone is or how they look. Return ONLY JSON: "

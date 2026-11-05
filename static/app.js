@@ -1,6 +1,7 @@
 import { stripHtml } from "./strip.js";
 import { Mic } from "./audio.js";
 import { drawBoxes } from "./boxes.js";
+import { loadHearing, hear, topScores } from "./hearing.js";
 
 const $ = s => document.querySelector(s);
 const INTERVAL = 3000, MAX_RULES = 3, MAX_HISTORY = 40, MAX_FAILS = 3, ROOM_SECONDS = 4, MAX_SPOKEN_SECONDS = 15;
@@ -8,7 +9,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const vid = $("#cam"), cv = document.createElement("canvas"), sm = document.createElement("canvas");
 sm.width = sm.height = 16;
 let audio, wake, stream, facing = "user", session, meta = [], running = false, prev = null, history = [], fails = 0, sampleTimers = [];
-let watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
+let hearingOn = false, hearTimer = null, peak = {}, hearMs = 0, watchToken = null, thumbs = {}, roomMic = null, talkMic = null, talkTimer = null, spoken = null, lastBoxes = [];
 
 const say = (m, isErr = false) => { $("#status").textContent = m; $("#status").classList.toggle("err", isErr); };
 const speak = m => { if ("speechSynthesis" in window) speechSynthesis.speak(new SpeechSynthesisUtterance(m)); };
@@ -134,6 +135,7 @@ async function loop() {
     fd.append("session", session); fd.append("image", blob, "f.jpg"); fd.append("diff", diff);
     const clip = roomMic?.wav(ROOM_SECONDS);
     if (clip) fd.append("audio", clip, "room.wav");
+    if (hearingOn) { fd.append("heard", JSON.stringify({ ms: hearMs, scores: topScores(peak) })); peak = {}; }
     const res = await fetch("/api/tick", { method: "POST", body: fd });
     if (res.status === 404) { say(await detail(res), true); stop(); return; }
     if (!res.ok) throw new Error(await detail(res));
@@ -157,6 +159,23 @@ async function loop() {
   setTimeout(loop, Math.max(200, INTERVAL - (Date.now() - t0)));
 }
 
+// The recognizer listens all the time, keeping each sound's strongest score until the next check, so a short clap isn't missed.
+function startListening() {
+  stopListening(); peak = {}; $("#hearing").hidden = false; $("#hearing").textContent = "Listening…";
+  hearTimer = setInterval(() => {
+    const sound = roomMic?.samples(2);
+    if (!sound) return;
+    try {
+      const r = hear(sound, 16000);
+      hearMs = r.ms;
+      for (const [k, v] of Object.entries(r.scores)) if (!(v <= peak[k])) peak[k] = v;
+      const [top, score] = Object.entries(topScores(r.scores, 1))[0] || ["Silence", 0];
+      $("#hearing").textContent = `Hearing now: ${top} ${Math.round(score * 100)}%`;
+    } catch (e) { console.error(e); }
+  }, 1000);
+}
+function stopListening() { clearInterval(hearTimer); hearTimer = null; $("#hearing").hidden = true; }
+
 function quietStatus(d) {
   if (d.problem) { say(d.problem, true); return; }
   const hot = d.cards.findIndex(c => c.status === "alert");
@@ -174,10 +193,11 @@ function planText(m) {
   if (!m.question) return "";
   const need = (m.conditions || []).map(c => c.max === 0 ? `no ${c.subject}` : c.min != null ? `at least ${c.min} ${c.subject}` : `at most ${c.max} ${c.subject}`);
   const parts = [`Asks: ${m.question}`];
-  if (m.subjects?.length) parts.push(`SAM looks for: ${m.subjects.join(", ")}.`);
+  if (m.subjects?.length && !m.sound_labels?.length) parts.push(`SAM looks for: ${m.subjects.join(", ")}.`);
   if (need.length) parts.push(`Only counts if SAM sees ${need.join(" and ")}.`);
   if (m.need) parts.push(`Must last ${Math.round(m.need)}s.`);
-  if (m.uses_sound) parts.push("Listens with the microphone. It hears speech well, but other sounds are unreliable.");
+  if (m.sound_labels?.length) parts.push(`A recognizer in this browser listens for: ${m.sound_labels.join("; ")}.`);
+  else if (m.uses_sound) parts.push("Listens for speech with the microphone.");
   return parts.join(" ");
 }
 function clock(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
@@ -205,7 +225,7 @@ function render(d) {
 function stop() {
   running = false; session = null;
   wake?.release().catch(() => {}); wake = null;
-  roomMic?.stop(); roomMic = null; spoken = null; showBoxes([]);
+  stopListening(); roomMic?.stop(); roomMic = null; hearingOn = false; spoken = null; showBoxes([]);
   document.body.classList.remove("alerting");
   setMonitor(false); $("#stop").hidden = true; $("#share").hidden = true;
   if (!history.length) return;
@@ -248,8 +268,20 @@ $("#go").onclick = async () => {
     render({ cards: meta.map(m => ({ status: "ok", held: 0, need: m.need, note: "" })), ledger: d.ledger, t: 0, skipped: 0, stages: d.stages, total: d.total });
     say("Watching. Checks run every few seconds.");
     if (meta.some(m => m.uses_sound)) {
-      try { roomMic = await new Mic(ROOM_SECONDS).start(); say("Watching and listening. Checks run every few seconds."); }
-      catch { say("A rule needs sound, but the microphone is off, so it can't fire. Allow the microphone and start again.", true); }
+      const wantsRecognizer = meta.some(m => m.sound_labels?.length);
+      try {
+        roomMic = await new Mic(ROOM_SECONDS, wantsRecognizer).start();
+        say("Watching and listening. Checks run every few seconds.");
+        if (wantsRecognizer) {
+          say("Loading the sound recognizer…");
+          try {
+            await loadHearing(); hearingOn = true; startListening();
+            for (let i = 0; i < 25 && !roomMic.samples(1); i++) await new Promise(r => setTimeout(r, 100));  // a second of sound first
+            say("Watching and listening. Checks run every few seconds.");
+          }
+          catch (e) { console.error(e); say("The sound recognizer couldn't load, so sounds other than speech may be missed.", true); }
+        }
+      } catch { say("A rule needs sound, but the microphone is off, so it can't fire. Allow the microphone and start again.", true); }
     }
     if (vid.ended) { vid.currentTime = 0; vid.play(); }
     loop();

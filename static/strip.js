@@ -4,6 +4,7 @@ const WORDS = { failed: "failed", unavailable: "unavailable", waiting: "working"
 
 function job(key, s) {
   if (key === "hear") return "Heard your spoken rule";
+  if (key === "listen") return `Hears: ${s?.top || "Quiet"}`;
   if (key === "understand") return "Turned your sentence into a rule";
   if (key === "confirm") return "Double-checks, then explains";
   if (key === "judge") return s?.sound ? "Answers from the picture and sound" : "Answers each rule's question";
@@ -12,8 +13,8 @@ function job(key, s) {
 }
 
 export function stripHtml(stages = {}, total) {
-  const order = [["hear", "Hear"], ["understand", "Understand"], ["see", "See"], ["judge", "Judge"], ["confirm", "Confirm"]]
-    .filter(([key]) => key !== "hear" || stages.hear);
+  const order = [["hear", "Hear"], ["understand", "Understand"], ["listen", "Listen"], ["see", "See"], ["judge", "Judge"], ["confirm", "Confirm"]]
+    .filter(([key]) => !["hear", "listen"].includes(key) || stages[key]);
   const cells = order.map(([key, name]) => {
     const s = stages[key], state = s ? s.state : "idle";
     const time = state === "ok" && s.ms != null ? `${(s.ms / 1000).toFixed(1)}s` : WORDS[state] || "standing by";

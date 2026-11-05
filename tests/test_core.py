@@ -281,6 +281,87 @@ class SecondDeviceTests(unittest.TestCase):
         self.assertNotIn("j", str(view["cards"]))
 
 
+class HearingTests(unittest.TestCase):
+    def test_visitor_data_is_cleaned(self):
+        self.assertEqual(server.parse_heard('{"ms":12,"scores":{"Clapping":0.8}}'), {"ms": 12, "scores": {"Clapping": 0.8}})
+        for bad in ("nope", "[]", '{"scores":5}', '{"scores":{"Clapping":"x"}}'):
+            self.assertIsNone(server.parse_heard(bad), bad)
+        self.assertEqual(server.parse_heard('{"scores":{"Clapping":9}}')["scores"], {})
+
+    def test_labels_are_limited_to_the_recognizer_list(self):
+        s = server.validate_spec({**SpecTests.good, "sound_labels": ["Clapping", "Made up"]}, "s")
+        self.assertEqual(s["sound_labels"], ["Clapping"])
+        self.assertEqual(server.validate_spec({**SpecTests.good, "sound_labels": "Clapping"}, "s")["sound_labels"], [])
+
+    def test_the_recognizer_fires_the_rule_without_asking_spark(self):
+        S = session(0)
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        S["heard"] = {"ms": 5, "scores": {"Clapping": 0.7, "Speech": 0.1}}
+        with mock.patch.object(meta, "check_frame") as spark, mock.patch.object(server, "start_sam"), \
+             mock.patch.object(server, "explain_later") as later:
+            out = server.run_check(S, b"j", 1, 3)
+        spark.assert_not_called()
+        self.assertEqual(out["cards"][0]["status"], "alert")
+        self.assertIn("clapping", out["new_alerts"][0]["say"])
+        later.assert_called_once()
+        self.assertEqual(out["stages"]["listen"]["top"], "Clapping 70%")
+
+    def test_a_low_score_stays_quiet_and_other_rules_still_use_spark(self):
+        S = session(0)
+        S["specs"].append({"title": "T", "subjects": [], "question": "Q2?", "duration_s": 0})
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        S["timers"].append(RuleTimer(0)); S["cards"].append(dict(S["cards"][0])); S["expl"].append("")
+        S["heard"] = {"ms": 5, "scores": {"Clapping": 0.1}}
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)) as spark, mock.patch.object(server, "start_sam"):
+            out = server.run_check(S, b"j", 1, 3)
+        self.assertEqual(spark.call_args.args[0], ["Q2?"])
+        self.assertEqual([c["status"] for c in out["cards"]], ["ok", "ok"])
+
+    def test_a_clap_scored_as_hands_counts_but_a_weak_one_does_not(self):
+        spec = {"sound_labels": ["Clapping"]}
+        self.assertEqual(server.heard_match(spec, {"scores": {"Hands": 0.8}}), ("Clapping", 0.8))
+        self.assertIsNone(server.heard_match(spec, {"scores": {"Hands": 0.3}}))
+        self.assertIsNone(server.heard_match({"sound_labels": ["Bark"]}, {"scores": {"Hands": 0.9}}))
+
+    def test_alert_stays_up_for_a_short_sound_and_can_fire_again_later(self):
+        S = session(0)
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        with mock.patch.object(server, "start_sam"), mock.patch.object(server, "explain_later"):
+            S["heard"] = {"ms": 1, "scores": {"Clapping": 0.9}}
+            server.run_check(S, b"j", 1, 3)
+            S["heard"] = {"ms": 1, "scores": {}}
+            self.assertEqual(server.run_check(S, b"j", 1, 6)["cards"][0]["status"], "alert")
+            self.assertEqual(server.run_check(S, b"j", 1, 20)["cards"][0]["status"], "alert")
+            server.run_check(S, b"j", 1, 34)
+            self.assertEqual(server.run_check(S, b"j", 1, 37)["cards"][0]["status"], "ok")
+            S["heard"] = {"ms": 1, "scores": {"Clapping": 0.9}}
+            self.assertEqual(len(server.run_check(S, b"j", 1, 40)["new_alerts"]), 1)
+
+    def test_wonder_explains_afterward_and_failure_keeps_the_alert(self):
+        class NowPool:
+            def submit(self, fn): fn()
+        S = session(0)
+        S["frames"].append(b"j")
+        alert = {"say": "Heard clapping (80% sure)."}
+        with mock.patch.object(server, "compile_pool", NowPool()), \
+             mock.patch.object(meta, "confirm", return_value={"confirm": True, "explanation": "Someone is clapping."}):
+            server.explain_later(S, 0, S["specs"][0], alert)
+        self.assertEqual(alert["say"], "Someone is clapping.")
+        self.assertEqual(S["stages"]["confirm"]["state"], "ok")
+        alert = {"say": "Heard clapping (80% sure)."}
+        with mock.patch.object(server, "compile_pool", NowPool()), mock.patch.object(meta, "confirm", side_effect=ValueError("x")):
+            server.explain_later(S, 0, S["specs"][0], alert)
+        self.assertEqual(alert["say"], "Heard clapping (80% sure).")
+        self.assertEqual(S["stages"]["confirm"]["state"], "unavailable")
+
+    def test_without_the_recognizer_spark_decides(self):
+        S = session(0)
+        S["specs"][0].update(sound_labels=["Clapping"], uses_sound=True)
+        with mock.patch.object(meta, "check_frame", return_value=yes(False)) as spark, mock.patch.object(server, "start_sam"):
+            server.run_check(S, b"j", 1, 3)
+        spark.assert_called_once()
+
+
 class SoundTests(unittest.TestCase):
     def test_sound_rule_gets_the_clip_and_is_never_skipped_as_still(self):
         S = session()

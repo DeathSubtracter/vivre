@@ -6,7 +6,7 @@ Check:  one camera frame -> (SAM 3.1, in the background) object counts -> (Spark
 Cheap model watches all the time; the strong model only speaks up when it matters.
 Every model call happens here, so the key never reaches the browser.
 """
-import os, threading, time, uuid
+import json, os, threading, time, uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
@@ -35,6 +35,12 @@ TRUST_PROXY = os.getenv("TRUST_PROXY", "0") == "1"  # set on the host, where a p
 
 MAX_RULES, MAX_RULE_CHARS, MAX_FRAME_BYTES, MAX_BODY_BYTES = 3, 200, 300_000, 1_000_000
 MAX_CLIP_BYTES, MAX_SPOKEN_BYTES = 200_000, 600_000  # about 6 s of room sound, about 18 s of speech, as 16 kHz WAV
+HEARD_MIN = float(os.getenv("HEARD_MIN", "0.25"))  # how sure the sound recognizer must be
+# Real claps often score as "Hands", so some sounds also count under related labels, each with its own bar.
+SOUND_ALSO = {"Clapping": {"Hands": 0.5, "Applause": 0.25}, "Baby cry, infant cry": {"Crying, sobbing": 0.4},
+              "Crying, sobbing": {"Baby cry, infant cry": 0.25}, "Smoke detector, smoke alarm": {"Fire alarm": 0.25, "Alarm": 0.4},
+              "Fire alarm": {"Smoke detector, smoke alarm": 0.25, "Alarm": 0.4}}
+SOUND_ALERT_HOLD_S = 30  # a clap is over in a moment, so its alert stays up long enough to be seen
 FRESH_S = 12             # SAM's counts and boxes older than this don't decide anything
 MIN_CHECK_S = 2.9        # no session checks faster than every 3 seconds
 STILL_DIFF, STILL_MAX_S = 0.015, 12  # still frames reuse the last answer, up to this long
@@ -50,7 +56,7 @@ sam_pool = ThreadPoolExecutor(max_workers=8)
 compile_pool = ThreadPoolExecutor(max_workers=6)
 
 
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
+CSP = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' https://fonts.googleapis.com; "
        "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
@@ -97,7 +103,27 @@ def validate_spec(o, sentence):
     title = o.get("title") if isinstance(o.get("title"), str) and o["title"].strip() else sentence
     return {"title": title.strip()[:60], "sentence": sentence, "subjects": subjects, "question": q.strip(), "duration_s": duration,
             "conditions": valid_conditions(o.get("conditions"), subjects),
+            "sound_labels": [x for x in o.get("sound_labels") or [] if x in meta.SOUND_LABELS][:5] if isinstance(o.get("sound_labels"), list) else [],
             "uses_sound": o.get("uses_sound") is True, "uses_motion": o.get("uses_motion") is True}
+
+
+def parse_heard(raw):
+    """What the browser's recognizer reports. It comes from the visitor, so keep only clean, known-shaped values."""
+    try:
+        o = json.loads(raw)
+        scores = {k[:60]: float(v) for k, v in list(o["scores"].items())[:12] if isinstance(k, str) and 0 <= float(v) <= 1}
+        return {"ms": max(0, min(10000, int(o.get("ms", 0)))), "scores": scores}
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
+def heard_match(spec, heard):
+    """Plain code: did the recognizer hear a sound this rule wants? Returns (label, score) or None."""
+    scores, hits = heard["scores"], []
+    for x in spec.get("sound_labels", []):
+        if scores.get(x, 0) >= HEARD_MIN: hits.append((x, scores[x]))
+        hits += [(x, scores[other]) for other, bar in SOUND_ALSO.get(x, {}).items() if scores.get(other, 0) >= bar]
+    return max(hits, key=lambda h: h[1]) if hits else None
 
 
 def valid_conditions(raw, subjects):
@@ -185,14 +211,15 @@ def start(body: Start, request: Request):
     sid = uuid.uuid4().hex
     S = {"specs": specs, "timers": [RuleTimer(s["duration_s"]) for s in specs], "expl": [""] * len(specs),
          "t0": now, "seen": now, "last": None, "last_call": 0, "last_tick": 0, "n": 0, "led": led, "ip": ip,
-         "frames": deque(maxlen=3), "counts": {}, "seen_at": {}, "boxes": {}, "audio": None,
+         "frames": deque(maxlen=3), "counts": {}, "seen_at": {}, "boxes": {}, "audio": None, "heard": None,
          "sam_pending": 0, "sam_ok": None, "sam_ms": None,
          "lock": threading.Lock(), "busy": threading.Lock(), "out": None, "log": [], "watch": uuid.uuid4().hex,
          "cards": [{"status": "ok", "held": 0, "need": s["duration_s"], "note": ""} for s in specs],
          "stages": {"understand": {"model": meta.COMPILER, "state": "ok", "ms": ms}}}
     with sessions_lock: sessions[sid] = S
     return {"session": sid, "watch": S["watch"], "cards": [{"title": s["title"], "sentence": r, "need": s["duration_s"], "question": s["question"],
-                                       "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"]}
+                                       "subjects": s["subjects"], "conditions": s["conditions"], "uses_sound": s["uses_sound"],
+                                       "sound_labels": s["sound_labels"]}
                                       for s, r in zip(specs, rules)],
             "ledger": led.report(), "total": round(led.total, 4), "stages": S["stages"]}
 
@@ -208,14 +235,41 @@ def sam_one(S, phrase, jpg):
             S["counts"][phrase], S["boxes"][phrase], S["seen_at"][phrase] = len(boxes), boxes, time.time()
 
 
+def by_ear(S, spec):
+    return bool(spec.get("sound_labels")) and S.get("heard") is not None
+
+
 def start_sam(S, jpg):
     """SAM runs beside the check; its results feed the next one, so it never slows a check down."""
-    wanted = [c["subject"] for s in S["specs"] for c in s.get("conditions", [])] + [x for s in S["specs"] for x in s["subjects"]]
+    looked_at = [s for s in S["specs"] if not by_ear(S, s)]  # a rule decided by ear needs no object counts
+    wanted = [c["subject"] for s in looked_at for c in s.get("conditions", [])] + [x for s in looked_at for x in s["subjects"]]
     subjects = list(dict.fromkeys(wanted))[:3]  # the ones that decide something come first
     with S["lock"]:
         if S["sam_pending"] or not subjects: return
         S["sam_pending"] = len(subjects)
     for x in subjects: sam_pool.submit(sam_one, S, x, jpg)
+
+
+def ear_answer(spec, heard):  # plain code decides; no model is asked
+    hit = heard_match(spec, heard)
+    if hit: return {"yes": True, "note": f"Heard {hit[0].lower()} ({round(hit[1] * 100)}% sure)."}
+    return {"yes": False, "note": f"Listening for {spec['sound_labels'][0].lower()}. Not hearing it."}
+
+
+def explain_later(S, i, spec, alert):
+    """Wonder writes the explanation in the background, so a slow answer never holds up the alert."""
+    S["stages"]["confirm"] = {"model": meta.JUDGE, "state": "waiting", "ms": None}
+    frames, audio, heard, t0 = list(S["frames"]), S["audio"], alert["say"], time.time()
+
+    def work():
+        try:
+            v = meta.confirm(spec["question"], frames, heard, S["led"], audio=audio, recognized=heard)
+            S["expl"][i] = alert["say"] = v["explanation"]
+            S["stages"]["confirm"] = {"model": meta.JUDGE, "state": "ok", "ms": meta.now_ms(t0)}
+        except Exception as e:
+            print(f"Wonder explanation failed: {meta.describe(e)}")
+            S["stages"]["confirm"] = {"model": meta.JUDGE, "state": "unavailable", "ms": meta.now_ms(t0)}
+    compile_pool.submit(work)
 
 
 def run_check(S, jpg, diff, now):
@@ -235,22 +289,33 @@ def run_check(S, jpg, diff, now):
         with S["lock"]: counts = ", ".join(f"{k} x{v}" for k, v in S["counts"].items())
         t0 = time.time()
         try:
-            answers = meta.check_frame([s["question"] for s in specs], frames, counts, led, audio=listen)
-            stages["judge"] = {"model": meta.COMPILER, "state": "ok" if answers else "failed", "ms": meta.now_ms(t0),
-                               "sound": bool(listen)}
+            asked = [s for s in specs if not by_ear(S, s)]
+            answers = meta.check_frame([s["question"] for s in asked], frames, counts, led, audio=listen) if asked else []
+            if asked:
+                stages["judge"] = {"model": meta.COMPILER, "state": "ok" if answers else "failed", "ms": meta.now_ms(t0),
+                                   "sound": bool(listen)}
         except Exception as e:
             print(f"Spark check failed: {meta.describe(e)}")
             answers, problem = None, friendly(e)
             stages["judge"] = {"model": meta.COMPILER, "state": "failed", "ms": meta.now_ms(t0)}
         if answers:
             S["last"], S["last_call"] = answers, now
-        elif not problem:
+        elif answers is None and not problem:
             problem = "Spark's answer wasn't usable on this check. Trying again."
     with S["lock"]:
         see = "unavailable" if S["sam_ok"] is False else "ok" if S["sam_ok"] else "waiting"
         fresh = {k: S["counts"][k] for k in S["counts"] if now - S["seen_at"].get(k, 0) <= FRESH_S}
         boxes = [{"label": k, "box": b} for k in fresh for b in S["boxes"][k]]
+        if not any(not by_ear(S, s) for s in specs): see = "idle"  # nothing to look at when sound decides every rule
         stages["see"] = {"model": meta.SEG, "state": see, "ms": S["sam_ms"], "counts": fresh, "overruled": False}
+
+    if S.get("heard"):
+        top = max(((k, v) for k, v in S["heard"]["scores"].items() if k != "Silence"), key=lambda kv: kv[1], default=None)
+        stages["listen"] = {"model": "YAMNet, in your browser", "state": "ok", "ms": S["heard"]["ms"],
+                            "top": f"{top[0]} {round(top[1] * 100)}%" if top else "Quiet"}
+    if answers is not None:  # rules decided by ear don't have a model answer, so plain code fills theirs in
+        pending = iter(answers)
+        answers = [ear_answer(s, S["heard"]) if by_ear(S, s) else next(pending, {"yes": False, "note": ""}) for s in specs]
 
     new = []
     if answers:  # with no usable answer the timers wait; a failed check isn't evidence either way
@@ -260,7 +325,13 @@ def run_check(S, jpg, diff, now):
             if yes and (why := unmet_condition(s, S["counts"], S["seen_at"], now)):
                 yes, note, stages["see"]["overruled"] = False, why, True
             state, held = timer.step(yes, t)
-            if state == "due":
+            if state == "due" and by_ear(S, s):  # the recognizer decided, so alert now; Wonder explains afterward
+                timer.confirmed(t, SOUND_ALERT_HOLD_S)
+                S["expl"][i], state = note, "alert"
+                alert = {"id": len(S.setdefault("log", [])) + 1, "i": i, "title": s["title"], "say": note, "t": t}
+                S["log"].append(alert); new.append(alert)
+                explain_later(S, i, s, alert)
+            elif state == "due":
                 t0 = time.time()
                 try:
                     v = meta.confirm(s["question"], list(S["frames"]), note, led, audio=S["audio"] if s.get("uses_sound") else None)
@@ -286,7 +357,7 @@ def run_check(S, jpg, diff, now):
 
 @app.post("/api/tick")
 def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), image: UploadFile = File(...),
-         audio: UploadFile | None = File(None)):
+         audio: UploadFile | None = File(None), heard: str | None = Form(None)):
     ip, now = client_ip(request), time.time()
     if not limiter.allow(f"tick:{ip}", 60, 60): raise HTTPException(429, "Too many checks. Wait a moment.")
     S = sessions.get(session)
@@ -309,6 +380,7 @@ def tick(request: Request, session: str = Form(...), diff: float = Form(1.0), im
             return sample_reply(reason)
         if S["out"] and now - S["last_tick"] < MIN_CHECK_S: return S["out"]
         S["last_tick"] = now
+        S["heard"] = parse_heard(heard) if heard else None
         S["audio"] = clip  # only the latest few seconds, and only in memory
         S["out"] = run_check(S, jpg, diff, now)
         return S["out"]

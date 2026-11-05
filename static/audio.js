@@ -25,10 +25,13 @@ export function encodeWav(samples, rate = WAV_RATE) {
 }
 
 export class Mic {
-  constructor(keepSeconds) { this.keep = keepSeconds; this.chunks = []; this.held = 0; }
+  // raw: skip the browser's noise suppression, which is built for speech and can remove claps, cries and alarms
+  constructor(keepSeconds, raw = false) { this.keep = keepSeconds; this.raw = raw; this.chunks = []; this.held = 0; }
 
   async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      video: false, audio: this.raw ? { noiseSuppression: false, echoCancellation: false, autoGainControl: false } : true,
+    });
     const AC = window.AudioContext || window.webkitAudioContext;
     this.ctx = new AC();
     await this.ctx.resume();
@@ -44,15 +47,20 @@ export class Mic {
     return this;
   }
 
-  // The last `seconds` of sound as a WAV blob, or null if there isn't a second of it yet.
-  wav(seconds = this.keep) {
+  // The last `seconds` of sound at 16 kHz, or null if there isn't a second of it yet.
+  samples(seconds = this.keep) {
     const rate = this.ctx?.sampleRate;
     if (!rate || this.held < rate) return null;
     const all = new Float32Array(this.held);
     let at = 0;
     for (const c of this.chunks) { all.set(c, at); at += c.length; }
     const recent = all.subarray(Math.max(0, all.length - Math.floor(seconds * rate)));
-    return new Blob([encodeWav(downsample(recent, rate))], { type: "audio/wav" });
+    return downsample(recent, rate);
+  }
+
+  wav(seconds = this.keep) {
+    const samples = this.samples(seconds);
+    return samples && new Blob([encodeWav(samples)], { type: "audio/wav" });
   }
 
   stop() {

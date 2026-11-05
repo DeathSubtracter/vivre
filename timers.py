@@ -12,6 +12,7 @@ class RuleTimer:
     misses: int = 0
     fired: bool = False
     hold_off_until: float = 0.0
+    alert_until: float = 0.0
 
     def step(self, yes, t):
         """Feed one check. Returns (state, seconds held). State is ok, watch, due or alert."""
@@ -22,6 +23,7 @@ class RuleTimer:
             return "ok", 0.0
         else:
             self.misses += 1
+            if self.fired and t < self.alert_until: return "alert", round(t - self.since, 1)  # a short sound stays on screen
             if self.misses > GRACE_MISSES:
                 self.since, self.misses, self.fired = None, 0, False
                 return "ok", 0.0
@@ -30,8 +32,8 @@ class RuleTimer:
         if yes and held >= self.need and t >= self.hold_off_until: return "due", held
         return "watch", held
 
-    def confirmed(self):
-        self.fired = True
+    def confirmed(self, t=0.0, hold_s=0.0):
+        self.fired, self.alert_until = True, t + hold_s
 
     def rejected(self, t):
         self.since, self.misses, self.fired = None, 0, False

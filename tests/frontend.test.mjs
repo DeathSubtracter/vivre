@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { downsample, encodeWav } from "../static/audio.js";
 import { coverMap } from "../static/boxes.js";
 import { stripHtml } from "../static/strip.js";
+import { bestScores, topScores } from "../static/hearing.js";
 
 test("downsample turns 48 kHz into a third as many samples and keeps the level", () => {
   const out = downsample(new Float32Array(4800).fill(0.5), 48000);
@@ -29,11 +30,27 @@ test("WAV header matches what Voice Transcribe requires", () => {
   assert.equal(v.getInt16(50, true), 32767);  // over-loud samples are clipped, not wrapped
 });
 
+test("the recognizer keeps each sound's best score across the clip", () => {
+  const window = (name, score) => ({ classifications: [{ categories: [{ categoryName: name, score }] }] });
+  assert.deepEqual(bestScores([window("Clapping", 0.2), window("Clapping", 0.8), window("Speech", 0.3), {}]), { Clapping: 0.8, Speech: 0.3 });
+});
+
+test("Silence only counts when nothing else was heard", () => {
+  assert.deepEqual(topScores({ Silence: 0.8, Clapping: 0.4 }), { Clapping: 0.4 });
+  assert.deepEqual(topScores({ Silence: 0.8 }), { Silence: 0.8 });
+  assert.equal(Object.keys(topScores(Object.fromEntries([...Array(20).keys()].map(i => ["s" + i, i / 20])))).length, 12);
+});
+
 test("boxes follow the video's crop", () => {
   const map = coverMap(640, 480, 400, 300);    // same shape: no crop
   assert.deepEqual(map([0, 0, 1, 1]), [0, 0, 400, 300]);
   const wide = coverMap(1280, 480, 640, 480);  // wider video: sides are cut off
   assert.deepEqual(wide([0.25, 0, 0.75, 1]), [0, 0, 640, 480]);
+});
+
+test("strip shows Listen only when the recognizer is running", () => {
+  assert.ok(!stripHtml({}).includes("Listen"));
+  assert.ok(stripHtml({ listen: { model: "YAMNet, in your browser", state: "ok", ms: 9, top: "Clapping 70%" } }).includes("Hears: Clapping 70%"));
 });
 
 test("strip shows Hear only when a rule was spoken, and marks SAM overruling Spark", () => {
