@@ -338,9 +338,20 @@ def spoken_rule(request: Request, audio: UploadFile = File(...)):
             "ledger": led.report(), "total": round(led.total, 6)}
 
 
+_visible = {"at": 0.0, "n": None}
+
+
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    """Free: how many models Meta offers this server right now, checked at most every 20 seconds."""
+    if time.time() - _visible["at"] > 20:
+        _visible["at"] = time.time()
+        try:
+            _visible["n"] = len(meta.client.models.list().data)
+        except Exception as e:
+            _visible["n"] = None
+            print(f"Couldn't list models: {meta.describe(e)}")
+    return {"ok": True, "models": _visible["n"]}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
